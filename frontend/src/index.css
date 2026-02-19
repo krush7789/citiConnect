@@ -1,0 +1,56 @@
+@import url("https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;500;600;700;800;900&display=swap");
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@layer base {
+  :root {
+    --background: 240 27% 97%;
+    --foreground: 0 0% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 11%;
+
+    --primary: 355 78% 56%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 220 26% 95%;
+    --secondary-foreground: 220 20% 20%;
+
+    --muted: 220 25% 95%;
+    --muted-foreground: 220 11% 44%;
+
+    --accent: 265 33% 91%;
+    --accent-foreground: 265 35% 30%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 220 18% 88%;
+    --input: 220 18% 88%;
+    --ring: 355 78% 56%;
+
+    --radius: 0.9rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Nunito Sans", "Segoe UI", sans-serif;
+    min-height: 100vh;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
