@@ -1,11 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useFormik } from "formik";
+import * as Yup from "yup";
 import { Link } from "react-router-dom";
-import { adminService, cityService } from "@/api/services";
+import { adminService, cityService, mediaService } from "@/api/services";
 import { LISTING_STATUS, LISTING_TYPE } from "@/lib/enums";
 import { formatDateOnly } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { ReadOnlyField } from "@/components/ui/field";
+import { Textarea } from "@/components/ui/textarea";
+import PaginationControls from "@/components/PaginationControls";
+import AdminDataTable from "@/components/admin/AdminDataTable";
+import { AdminEmptyState, AdminInlineState, AdminPageHeader } from "@/components/admin/AdminPagePrimitives";
 
 const defaultForm = {
   id: "",
@@ -21,59 +29,237 @@ const defaultForm = {
   status: LISTING_STATUS.DRAFT,
   is_featured: false,
   offer_text: "",
+  cover_image_url: "",
+  gallery_urls_text: "",
+  metadata_text: "{}",
+  vibe_tags_text: "",
 };
 
 const listingTypes = Object.values(LISTING_TYPE);
 const listingStatuses = Object.values(LISTING_STATUS);
+const LISTINGS_PAGE_SIZE = 20;
+
+const metadataTemplates = {
+  [LISTING_TYPE.MOVIE]: {
+    language: "Hindi",
+    certification: "U/A",
+    duration_min: 120,
+    director: "",
+    cast: [],
+    release_type: "2D",
+  },
+  [LISTING_TYPE.EVENT]: {
+    genre: "",
+    artists: [],
+    age_restriction: "",
+    entry_gate: "",
+    reporting_time: "",
+    parking: "Available",
+  },
+  [LISTING_TYPE.RESTAURANT]: {
+    cuisine: "",
+    avg_cost_for_two: 0,
+    rating: "",
+    features: [],
+    opening_hours: "",
+    dress_code: "",
+  },
+  [LISTING_TYPE.ACTIVITY]: {
+    difficulty: "",
+    duration: "",
+    includes: [],
+    age_limit: "",
+    what_to_carry: [],
+  },
+};
+
+const toOptionalNumber = (value) => {
+  if (value === "" || value === null || value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const trimmedOrUndefined = (value) => {
+  if (value === null || value === undefined) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed || undefined;
+};
+
+const parseStringList = (value) =>
+  [...new Set(String(value || "").split(/[\n,]+/).map((item) => item.trim()).filter(Boolean))];
+
+const parseMetadataJson = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const validationSchema = Yup.object({
+  type: Yup.string().required("Type is required."),
+  title: Yup.string().trim().required("Listing title is required."),
+  status: Yup.string().required("Status is required."),
+  price_min: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Price min must be >= 0."),
+  price_max: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Price max must be >= 0."),
+  metadata_text: Yup.string().required("Metadata JSON is required."),
+}).test("price-order", "Price max must be greater than or equal to price min.", (values) => {
+  if (!values) return true;
+  const min = values.price_min === "" ? null : Number(values.price_min);
+  const max = values.price_max === "" ? null : Number(values.price_max);
+  if (min === null || Number.isNaN(min) || max === null || Number.isNaN(max)) return true;
+  return max >= min;
+});
 
 const AdminListingsPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadingGallery, setUploadingGallery] = useState(false);
   const [items, setItems] = useState([]);
   const [error, setError] = useState("");
-  const [filters, setFilters] = useState({ type: "", status: "", city: "" });
+  const [filters, setFilters] = useState({ type: "", status: "", city: "", q: "" });
+  const [searchDraft, setSearchDraft] = useState("");
   const [cities, setCities] = useState([]);
   const [venues, setVenues] = useState([]);
   const [formMode, setFormMode] = useState("");
-  const [form, setForm] = useState(defaultForm);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageMeta, setPageMeta] = useState({ page: 1, total_pages: 1, total: 0 });
+  const [editingLoadId, setEditingLoadId] = useState("");
+  const listingFormik = useFormik({
+    initialValues: defaultForm,
+    validationSchema,
+    validateOnMount: true,
+    onSubmit: async (values) => {
+      const title = trimmedOrUndefined(values.title);
+      const cityId = trimmedOrUndefined(values.city_id) || null;
+      const venueId = trimmedOrUndefined(values.venue_id) || null;
+      const priceMin = toOptionalNumber(values.price_min);
+      const priceMaxInput = toOptionalNumber(values.price_max);
+      const priceMax = priceMaxInput ?? priceMin;
+      const metadata = parseMetadataJson(values.metadata_text);
+      const vibeTags = parseStringList(values.vibe_tags_text);
+      const galleryImageUrls = parseStringList(values.gallery_urls_text);
+      const coverImageUrl = trimmedOrUndefined(values.cover_image_url) || galleryImageUrls[0];
+
+      if (!title) {
+        setError("Listing title is required.");
+        return;
+      }
+      if (priceMin !== undefined && priceMax !== undefined && priceMin > priceMax) {
+        setError("Price max must be greater than or equal to price min.");
+        return;
+      }
+      if (metadata === null) {
+        setError("Metadata must be a valid JSON object.");
+        return;
+      }
+
+      const payload = {
+        type: values.type,
+        title,
+        description: trimmedOrUndefined(values.description),
+        city_id: cityId,
+        venue_id: venueId,
+        category: trimmedOrUndefined(values.category),
+        price_min: priceMin,
+        price_max: priceMax,
+        currency: values.currency,
+        status: values.status,
+        is_featured: values.is_featured,
+        offer_text: trimmedOrUndefined(values.offer_text),
+        cover_image_url: coverImageUrl,
+        gallery_image_urls: galleryImageUrls.length ? galleryImageUrls : undefined,
+        metadata: metadata || {},
+        vibe_tags: vibeTags.length ? vibeTags : undefined,
+      };
+
+      setSaving(true);
+      setError("");
+      try {
+        if (formMode === "create") {
+          await adminService.createListing(payload);
+        } else if (formMode === "edit") {
+          await adminService.updateListing(values.id, payload);
+        }
+        setFormMode("");
+        listingFormik.resetForm({ values: defaultForm });
+        setPage(1);
+        setRefreshKey((prev) => prev + 1);
+      } catch (err) {
+        setError(err?.normalized?.message || "Unable to save listing.");
+      } finally {
+        setSaving(false);
+      }
+    },
+  });
+  const listingValues = listingFormik.values;
+  const setListingFieldValue = listingFormik.setFieldValue;
 
   const selectedCity = useMemo(
-    () => cities.find((city) => city.id === form.city_id),
-    [cities, form.city_id]
+    () => cities.find((city) => city.id === listingValues.city_id),
+    [cities, listingValues.city_id]
   );
+  const galleryUrls = useMemo(() => parseStringList(listingValues.gallery_urls_text), [listingValues.gallery_urls_text]);
 
   useEffect(() => {
     let mounted = true;
-    cityService.getCities().then((response) => {
-      if (!mounted) return;
-      const nextCities = response.items || [];
-      setCities(nextCities);
-      setForm((prev) => (prev.city_id || !nextCities[0] ? prev : { ...prev, city_id: nextCities[0].id }));
-    });
+    cityService
+      .getCities()
+      .then((response) => {
+        if (!mounted) return;
+        setCities(response.items || []);
+      })
+      .catch(() => {
+        if (mounted) setCities([]);
+      });
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
-    if (!form.city_id) {
+    if (!listingValues.city_id) return;
+    if (cities.some((city) => city.id === listingValues.city_id)) return;
+    setListingFieldValue("city_id", "", false);
+    setListingFieldValue("venue_id", "", false);
+  }, [cities, listingValues.city_id, setListingFieldValue]);
+
+  useEffect(() => {
+    const selectedCityId = listingValues.city_id;
+    if (!selectedCityId) {
       setVenues([]);
+      if (listingValues.venue_id) {
+        setListingFieldValue("venue_id", "", false);
+      }
       return;
     }
+
     let mounted = true;
-    cityService.getVenues({ city_id: form.city_id }).then((response) => {
-      if (!mounted) return;
-      const nextVenues = response.items || [];
-      setVenues(nextVenues);
-      if (!nextVenues.find((venue) => venue.id === form.venue_id) && nextVenues[0]) {
-        setForm((prev) => ({ ...prev, venue_id: nextVenues[0].id }));
-      }
-    });
+    cityService
+      .getVenues({ city_id: selectedCityId })
+      .then((response) => {
+        if (!mounted) return;
+        const nextVenues = response.items || [];
+        setVenues(nextVenues);
+        if (listingValues.venue_id && !nextVenues.some((venue) => venue.id === listingValues.venue_id)) {
+          setListingFieldValue("venue_id", "", false);
+        }
+      })
+      .catch(() => {
+        if (mounted) setVenues([]);
+      });
     return () => {
       mounted = false;
     };
-  }, [form.city_id, form.venue_id]);
+  }, [listingValues.city_id, listingValues.venue_id, setListingFieldValue]);
 
   useEffect(() => {
     let mounted = true;
@@ -84,12 +270,18 @@ const AdminListingsPage = () => {
         type: filters.type || undefined,
         status: filters.status || undefined,
         city: filters.city || undefined,
-        page: 1,
-        page_size: 200,
+        q: filters.q || undefined,
+        page,
+        page_size: LISTINGS_PAGE_SIZE,
       })
       .then((response) => {
         if (!mounted) return;
         setItems(response.items || []);
+        setPageMeta({
+          page: response.page || page,
+          total_pages: response.total_pages || 1,
+          total: response.total || 0,
+        });
       })
       .catch((err) => {
         if (!mounted) return;
@@ -101,76 +293,113 @@ const AdminListingsPage = () => {
     return () => {
       mounted = false;
     };
-  }, [filters, refreshKey]);
+  }, [filters, page, refreshKey]);
 
   const openCreate = () => {
     setFormMode("create");
-    setForm({
-      ...defaultForm,
-      city_id: cities[0]?.id || "",
-      venue_id: "",
+    setError("");
+    listingFormik.resetForm({
+      values: {
+        ...defaultForm,
+        metadata_text: JSON.stringify(metadataTemplates[LISTING_TYPE.EVENT], null, 2),
+      },
     });
   };
 
-  const openEdit = (listing) => {
-    setFormMode("edit");
-    setForm({
-      id: listing.id,
-      type: listing.type || LISTING_TYPE.EVENT,
-      title: listing.title || "",
-      description: listing.description || "",
-      city_id: listing.city_id || "",
-      venue_id: listing.venue_id || "",
-      category: listing.category || "",
-      price_min: listing.price_min ?? "",
-      price_max: listing.price_max ?? "",
-      currency: listing.currency || "INR",
-      status: listing.status || LISTING_STATUS.DRAFT,
-      is_featured: Boolean(listing.is_featured),
-      offer_text: listing.offer_text || "",
-    });
-  };
-
-  const onSubmit = async (event) => {
+  const onApplySearch = (event) => {
     event.preventDefault();
-    setSaving(true);
+    setPage(1);
+    setFilters((prev) => ({ ...prev, q: searchDraft.trim() }));
+  };
+
+  const onClearSearch = () => {
+    setSearchDraft("");
+    setPage(1);
+    setFilters((prev) => ({ ...prev, q: "" }));
+  };
+
+  const openEdit = async (listing) => {
+    setEditingLoadId(listing.id);
     setError("");
     try {
-      if (formMode === "create") {
-        await adminService.createListing({
-          type: form.type,
-          title: form.title,
-          description: form.description,
-          city_id: form.city_id,
-          venue_id: form.venue_id,
-          category: form.category,
-          price_min: Number(form.price_min || 0),
-          price_max: Number(form.price_max || 0),
-          currency: form.currency,
-          status: form.status,
-          is_featured: form.is_featured,
-          offer_text: form.offer_text,
-        });
-      } else if (formMode === "edit") {
-        await adminService.updateListing(form.id, {
-          title: form.title,
-          description: form.description,
-          category: form.category,
-          price_min: Number(form.price_min || 0),
-          price_max: Number(form.price_max || 0),
-          status: form.status,
-          is_featured: form.is_featured,
-          offer_text: form.offer_text,
-        });
-      }
-      setFormMode("");
-      setForm(defaultForm);
-      setRefreshKey((prev) => prev + 1);
+      const detail = await adminService.getListingById(listing.id);
+      const nextGallery = Array.isArray(detail.gallery_image_urls) ? detail.gallery_image_urls : [];
+      const fallbackCover = (detail.cover_image_url || "").trim() || nextGallery[0] || "";
+      setFormMode("edit");
+      listingFormik.resetForm({
+        values: {
+          id: detail.id || "",
+          type: detail.type || LISTING_TYPE.EVENT,
+          title: detail.title || "",
+          description: detail.description || "",
+          city_id: detail.city_id || "",
+          venue_id: detail.venue_id || "",
+          category: detail.category || "",
+          price_min: detail.price_min ?? "",
+          price_max: detail.price_max ?? "",
+          currency: detail.currency || "INR",
+          status: detail.status || LISTING_STATUS.DRAFT,
+          is_featured: Boolean(detail.is_featured),
+          offer_text: detail.offer_text || "",
+          cover_image_url: fallbackCover,
+          gallery_urls_text: nextGallery.join("\n"),
+          metadata_text: JSON.stringify(detail.metadata || {}, null, 2),
+          vibe_tags_text: Array.isArray(detail.vibe_tags) ? detail.vibe_tags.join(", ") : "",
+        },
+      });
     } catch (err) {
-      setError(err?.normalized?.message || "Unable to save listing.");
+      setError(err?.normalized?.message || "Unable to load listing details.");
     } finally {
-      setSaving(false);
+      setEditingLoadId("");
     }
+  };
+
+  const onUploadCover = async (event) => {
+    const selected = event.target.files?.[0];
+    if (!selected) return;
+    setUploadingCover(true);
+    setError("");
+    try {
+      const upload = await mediaService.uploadImage(selected, { folder: "listing-cover" });
+      listingFormik.setFieldValue("cover_image_url", upload?.url || listingFormik.values.cover_image_url);
+    } catch (err) {
+      setError(err?.normalized?.message || "Unable to upload cover image.");
+    } finally {
+      setUploadingCover(false);
+      event.target.value = "";
+    }
+  };
+
+  const onUploadGallery = async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    setUploadingGallery(true);
+    setError("");
+    try {
+      const uploads = await Promise.all(files.map((file) => mediaService.uploadImage(file, { folder: "listing-gallery" })));
+      const uploadedUrls = uploads.map((item) => item?.url).filter(Boolean);
+      const merged = [...new Set([...parseStringList(listingFormik.values.gallery_urls_text), ...uploadedUrls])];
+      listingFormik.setFieldValue("gallery_urls_text", merged.join("\n"));
+      if (!trimmedOrUndefined(listingFormik.values.cover_image_url) && merged[0]) {
+        listingFormik.setFieldValue("cover_image_url", merged[0]);
+      }
+    } catch (err) {
+      setError(err?.normalized?.message || "Unable to upload gallery images.");
+    } finally {
+      setUploadingGallery(false);
+      event.target.value = "";
+    }
+  };
+
+  const useTypeTemplate = () => {
+    const template = metadataTemplates[listingFormik.values.type] || {};
+    listingFormik.setFieldValue("metadata_text", JSON.stringify(template, null, 2));
+  };
+
+  const onCancelForm = () => {
+    setFormMode("");
+    setError("");
+    listingFormik.resetForm({ values: defaultForm });
   };
 
   const onArchive = async (listingId) => {
@@ -185,27 +414,84 @@ const AdminListingsPage = () => {
     }
   };
 
+  const listingColumns = [
+    {
+      accessorKey: "title",
+      header: "Title",
+      cell: ({ row }) => (
+        <div>
+          <p className="font-semibold">{row.original.title}</p>
+          <p className="text-xs text-muted-foreground font-mono mt-1">{row.original.id}</p>
+        </div>
+      ),
+    },
+    {
+      accessorKey: "type",
+      header: "Type",
+    },
+    {
+      accessorKey: "city",
+      header: "City",
+    },
+    {
+      accessorKey: "status",
+      header: "Status",
+    },
+    {
+      accessorKey: "total_bookings",
+      header: "Bookings",
+      cell: ({ row }) => Number(row.original.total_bookings || 0).toLocaleString("en-IN"),
+    },
+    {
+      accessorKey: "created_at",
+      header: "Created",
+      cell: ({ row }) => formatDateOnly(row.original.created_at),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={Boolean(editingLoadId)}
+            onClick={() => openEdit(row.original)}
+          >
+            {editingLoadId === row.original.id ? "Loading..." : "Edit"}
+          </Button>
+          <Button size="sm" variant="outline" asChild>
+            <Link to={`/admin/listings/${row.original.id}/occurrences`}>Occurrences</Link>
+          </Button>
+          {row.original.status !== LISTING_STATUS.ARCHIVED ? (
+            <Button size="sm" variant="destructive" onClick={() => onArchive(row.original.id)}>
+              Archive
+            </Button>
+          ) : null}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Listings Management</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Filter, edit, archive listings, and jump to occurrence management.
-          </p>
-        </div>
-        <Button onClick={openCreate}>Create listing</Button>
-      </div>
+      <AdminPageHeader
+        title="Listings Management"
+        description="Filter, edit, archive listings, and jump to occurrence management."
+        actions={<Button onClick={openCreate}>Create listing</Button>}
+      />
 
       <Card>
         <CardContent className="pt-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <p className="text-xs text-muted-foreground mb-1">Type</p>
-              <select
+              <Select
                 value={filters.type}
-                onChange={(event) => setFilters((prev) => ({ ...prev, type: event.target.value }))}
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                onChange={(event) => {
+                  setPage(1);
+                  setFilters((prev) => ({ ...prev, type: event.target.value }));
+                }}
               >
                 <option value="">All</option>
                 {listingTypes.map((type) => (
@@ -213,15 +499,17 @@ const AdminListingsPage = () => {
                     {type}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div>
               <p className="text-xs text-muted-foreground mb-1">Status</p>
-              <select
+              <Select
                 value={filters.status}
-                onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                onChange={(event) => {
+                  setPage(1);
+                  setFilters((prev) => ({ ...prev, status: event.target.value }));
+                }}
               >
                 <option value="">All</option>
                 {listingStatuses.map((status) => (
@@ -229,15 +517,17 @@ const AdminListingsPage = () => {
                     {status}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div>
               <p className="text-xs text-muted-foreground mb-1">City</p>
-              <select
+              <Select
                 value={filters.city}
-                onChange={(event) => setFilters((prev) => ({ ...prev, city: event.target.value }))}
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                onChange={(event) => {
+                  setPage(1);
+                  setFilters((prev) => ({ ...prev, city: event.target.value }));
+                }}
               >
                 <option value="">All</option>
                 {cities.map((city) => (
@@ -245,9 +535,27 @@ const AdminListingsPage = () => {
                     {city.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
+          <form onSubmit={onApplySearch} className="mt-3 flex flex-col md:flex-row md:items-end gap-2">
+            <div className="flex-1">
+              <p className="text-xs text-muted-foreground mb-1">Search listings</p>
+              <Input
+                value={searchDraft}
+                onChange={(event) => setSearchDraft(event.target.value)}
+                placeholder="Search by title, category, or listing id"
+              />
+            </div>
+            <Button type="submit" className="md:min-w-28">
+              Search
+            </Button>
+            {filters.q ? (
+              <Button type="button" variant="outline" onClick={onClearSearch}>
+                Clear
+              </Button>
+            ) : null}
+          </form>
         </CardContent>
       </Card>
 
@@ -255,84 +563,101 @@ const AdminListingsPage = () => {
         <Card>
           <CardHeader>
             <CardTitle className="text-xl">
-              {formMode === "create" ? "Create listing" : `Edit listing: ${form.title || form.id}`}
+              {formMode === "create"
+                ? "Create listing"
+                : `Edit listing: ${listingFormik.values.title || listingFormik.values.id}`}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={onSubmit} className="space-y-4">
+            <form onSubmit={listingFormik.handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Type</p>
-                  <select
-                    value={form.type}
-                    onChange={(event) => setForm((prev) => ({ ...prev, type: event.target.value }))}
-                    disabled={formMode === "edit"}
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-60"
+                  <p className="text-xs text-muted-foreground mb-1">Type <span className="text-destructive">*</span></p>
+                  <Select
+                    name="type"
+                    value={listingFormik.values.type}
+                    onChange={listingFormik.handleChange}
+                    onBlur={listingFormik.handleBlur}
                   >
                     {listingTypes.map((type) => (
                       <option key={type} value={type}>
                         {type}
                       </option>
                     ))}
-                  </select>
+                  </Select>
+                  {listingFormik.touched.type && listingFormik.errors.type ? (
+                    <p className="text-xs text-destructive mt-1">{listingFormik.errors.type}</p>
+                  ) : null}
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">City</p>
-                  <select
-                    value={form.city_id}
-                    onChange={(event) => setForm((prev) => ({ ...prev, city_id: event.target.value }))}
-                    disabled={formMode === "edit"}
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-60"
+                  <p className="text-xs text-muted-foreground mb-1">City (optional)</p>
+                  <Select
+                    name="city_id"
+                    value={listingFormik.values.city_id}
+                    onChange={(event) => {
+                      listingFormik.setFieldValue("city_id", event.target.value);
+                      listingFormik.setFieldValue("venue_id", "");
+                    }}
+                    onBlur={listingFormik.handleBlur}
                   >
+                    <option value="">Nationwide / All India</option>
                     {cities.map((city) => (
                       <option key={city.id} value={city.id}>
                         {city.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Venue</p>
-                  <select
-                    value={form.venue_id}
-                    onChange={(event) => setForm((prev) => ({ ...prev, venue_id: event.target.value }))}
-                    disabled={formMode === "edit"}
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-60"
+                  <p className="text-xs text-muted-foreground mb-1">Venue (optional)</p>
+                  <Select
+                    name="venue_id"
+                    value={listingFormik.values.venue_id}
+                    onChange={listingFormik.handleChange}
+                    onBlur={listingFormik.handleBlur}
                   >
-                    <option value="">Select venue</option>
+                    <option value="">Auto / Multiple venues</option>
                     {venues.map((venue) => (
                       <option key={venue.id} value={venue.id}>
                         {venue.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Title</p>
+                  <p className="text-xs text-muted-foreground mb-1">Title <span className="text-destructive">*</span></p>
                   <Input
-                    value={form.title}
-                    onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-                    required
+                    name="title"
+                    value={listingFormik.values.title}
+                    onChange={listingFormik.handleChange}
+                    onBlur={listingFormik.handleBlur}
                   />
+                  {listingFormik.touched.title && listingFormik.errors.title ? (
+                    <p className="text-xs text-destructive mt-1">{listingFormik.errors.title}</p>
+                  ) : null}
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Category</p>
                   <Input
-                    value={form.category}
-                    onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}
+                    name="category"
+                    value={listingFormik.values.category}
+                    onChange={listingFormik.handleChange}
+                    onBlur={listingFormik.handleBlur}
                   />
                 </div>
               </div>
 
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Description</p>
-                <textarea
-                  value={form.description}
-                  onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-                  className="min-h-[88px] w-full rounded-md border bg-background p-3 text-sm"
+                <Textarea
+                  name="description"
+                  value={listingFormik.values.description}
+                  onChange={listingFormik.handleChange}
+                  onBlur={listingFormik.handleBlur}
+                  className="min-h-[88px]"
                 />
               </div>
 
@@ -340,38 +665,46 @@ const AdminListingsPage = () => {
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Price min</p>
                   <Input
+                    name="price_min"
                     type="number"
-                    value={form.price_min}
-                    onChange={(event) => setForm((prev) => ({ ...prev, price_min: event.target.value }))}
+                    value={listingFormik.values.price_min}
+                    onChange={listingFormik.handleChange}
+                    onBlur={listingFormik.handleBlur}
                   />
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Price max</p>
                   <Input
+                    name="price_max"
                     type="number"
-                    value={form.price_max}
-                    onChange={(event) => setForm((prev) => ({ ...prev, price_max: event.target.value }))}
+                    value={listingFormik.values.price_max}
+                    onChange={listingFormik.handleChange}
+                    onBlur={listingFormik.handleBlur}
                   />
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Status</p>
-                  <select
-                    value={form.status}
-                    onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  <p className="text-xs text-muted-foreground mb-1">Status <span className="text-destructive">*</span></p>
+                  <Select
+                    name="status"
+                    value={listingFormik.values.status}
+                    onChange={listingFormik.handleChange}
+                    onBlur={listingFormik.handleBlur}
                   >
                     {listingStatuses.map((status) => (
                       <option key={status} value={status}>
                         {status}
                       </option>
                     ))}
-                  </select>
+                  </Select>
+                  {listingFormik.touched.status && listingFormik.errors.status ? (
+                    <p className="text-xs text-destructive mt-1">{listingFormik.errors.status}</p>
+                  ) : null}
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">City preview</p>
-                  <div className="h-10 rounded-md border bg-muted/30 px-3 flex items-center text-sm">
-                    {selectedCity ? selectedCity.name : "--"}
-                  </div>
+                  <ReadOnlyField>
+                    {selectedCity ? selectedCity.name : "All India / Multiple venues"}
+                  </ReadOnlyField>
                 </div>
               </div>
 
@@ -379,8 +712,8 @@ const AdminListingsPage = () => {
                 <input
                   id="is_featured"
                   type="checkbox"
-                  checked={Boolean(form.is_featured)}
-                  onChange={(event) => setForm((prev) => ({ ...prev, is_featured: event.target.checked }))}
+                  checked={Boolean(listingFormik.values.is_featured)}
+                  onChange={(event) => listingFormik.setFieldValue("is_featured", event.target.checked)}
                 />
                 <label htmlFor="is_featured" className="text-sm">
                   Featured listing
@@ -390,23 +723,85 @@ const AdminListingsPage = () => {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Offer text</p>
                 <Input
-                  value={form.offer_text}
-                  onChange={(event) => setForm((prev) => ({ ...prev, offer_text: event.target.value }))}
+                  name="offer_text"
+                  value={listingFormik.values.offer_text}
+                  onChange={listingFormik.handleChange}
+                  onBlur={listingFormik.handleBlur}
                 />
               </div>
 
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Upload cover image</p>
+                <Input type="file" accept="image/*" onChange={onUploadCover} disabled={uploadingCover} />
+                {uploadingCover ? <p className="text-xs text-muted-foreground mt-1">Uploading cover...</p> : null}
+              </div>
+
+              {(trimmedOrUndefined(listingFormik.values.cover_image_url) || galleryUrls[0]) ? (
+                <img
+                  src={trimmedOrUndefined(listingFormik.values.cover_image_url) || galleryUrls[0]}
+                  alt="Cover preview"
+                  className="h-40 w-full max-w-md rounded-md border object-cover"
+                />
+              ) : null}
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-xs text-muted-foreground">Gallery image URLs (comma or newline separated)</p>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={onUploadGallery}
+                    disabled={uploadingGallery}
+                    className="max-w-sm"
+                  />
+                </div>
+                {uploadingGallery ? <p className="text-xs text-muted-foreground">Uploading gallery...</p> : null}
+                <Textarea
+                  name="gallery_urls_text"
+                  value={listingFormik.values.gallery_urls_text}
+                  onChange={listingFormik.handleChange}
+                  onBlur={listingFormik.handleBlur}
+                  className="min-h-[88px]"
+                  placeholder="https://.../img1.jpg&#10;https://.../img2.jpg"
+                />
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Vibe tags (comma separated)</p>
+                <Input
+                  name="vibe_tags_text"
+                  value={listingFormik.values.vibe_tags_text}
+                  onChange={listingFormik.handleChange}
+                  onBlur={listingFormik.handleBlur}
+                  placeholder="family, date-night, premium"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-xs text-muted-foreground">Type metadata (JSON object) <span className="text-destructive">*</span></p>
+                  <Button type="button" size="sm" variant="outline" onClick={useTypeTemplate}>
+                    Use {listingFormik.values.type} template
+                  </Button>
+                </div>
+                <Textarea
+                  name="metadata_text"
+                  value={listingFormik.values.metadata_text}
+                  onChange={listingFormik.handleChange}
+                  onBlur={listingFormik.handleBlur}
+                  className="min-h-[170px] font-mono"
+                />
+                {listingFormik.touched.metadata_text && listingFormik.errors.metadata_text ? (
+                  <p className="text-xs text-destructive mt-1">{listingFormik.errors.metadata_text}</p>
+                ) : null}
+              </div>
+
               <div className="flex items-center gap-2">
-                <Button type="submit" disabled={saving}>
+                <Button type="submit" disabled={saving || !listingFormik.isValid}>
                   {saving ? "Saving..." : formMode === "create" ? "Create listing" : "Save changes"}
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setFormMode("");
-                    setForm(defaultForm);
-                  }}
-                >
+                <Button type="button" variant="outline" onClick={onCancelForm}>
                   Cancel
                 </Button>
               </div>
@@ -415,63 +810,29 @@ const AdminListingsPage = () => {
         </Card>
       ) : null}
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <AdminInlineState tone="error">{error}</AdminInlineState> : null}
 
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">Listings</CardTitle>
         </CardHeader>
         <CardContent>
-          {loading ? <p className="text-sm text-muted-foreground">Loading listings...</p> : null}
+          {loading ? <AdminInlineState>Loading listings...</AdminInlineState> : null}
           {!loading && !items.length ? (
-            <div className="rounded-lg border p-5 text-sm text-muted-foreground">No listings found.</div>
+            <AdminEmptyState message="No listings found." />
           ) : null}
           {items.length > 0 ? (
-            <div className="rounded-lg border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="text-left p-3">Title</th>
-                    <th className="text-left p-3">Type</th>
-                    <th className="text-left p-3">City</th>
-                    <th className="text-left p-3">Status</th>
-                    <th className="text-left p-3">Bookings</th>
-                    <th className="text-left p-3">Created</th>
-                    <th className="text-left p-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((listing) => (
-                    <tr key={listing.id} className="border-t align-top">
-                      <td className="p-3">
-                        <p className="font-semibold">{listing.title}</p>
-                        <p className="text-xs text-muted-foreground font-mono mt-1">{listing.id}</p>
-                      </td>
-                      <td className="p-3">{listing.type}</td>
-                      <td className="p-3">{listing.city}</td>
-                      <td className="p-3">{listing.status}</td>
-                      <td className="p-3">{Number(listing.total_bookings || 0).toLocaleString("en-IN")}</td>
-                      <td className="p-3">{formatDateOnly(listing.created_at)}</td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Button size="sm" variant="outline" onClick={() => openEdit(listing)}>
-                            Edit
-                          </Button>
-                          <Button size="sm" variant="outline" asChild>
-                            <Link to={`/admin/listings/${listing.id}/occurrences`}>Occurrences</Link>
-                          </Button>
-                          {listing.status !== LISTING_STATUS.ARCHIVED ? (
-                            <Button size="sm" variant="destructive" onClick={() => onArchive(listing.id)}>
-                              Archive
-                            </Button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <AdminDataTable columns={listingColumns} data={items} />
+              <PaginationControls
+                page={pageMeta.page}
+                totalPages={pageMeta.total_pages}
+                totalItems={pageMeta.total}
+                disabled={loading}
+                onPrevious={() => setPage((prev) => Math.max(1, prev - 1))}
+                onNext={() => setPage((prev) => Math.min(pageMeta.total_pages || 1, prev + 1))}
+              />
+            </>
           ) : null}
         </CardContent>
       </Card>

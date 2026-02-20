@@ -3,15 +3,27 @@ import { Heart, Star } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const MovieCard = ({ listing, compact = false, onToggleWishlist }) => {
+  const coverImageUrl =
+    (typeof listing.cover_image_url === "string" && listing.cover_image_url.trim()) ||
+    (typeof listing.gallery_image_urls?.[0] === "string" && listing.gallery_image_urls[0].trim()) ||
+    null;
+
   return (
     <article className="group">
       <Link to={`/listings/${listing.id}`} className="block">
         <div className="relative rounded-2xl overflow-hidden shadow-sm border bg-white">
-          <img
-            src={listing.cover_image_url}
-            alt={listing.title}
-            className={`w-full object-cover transition-transform duration-300 group-hover:scale-[1.02] ${compact ? "aspect-[3/4]" : "aspect-[3/4]"}`}
-          />
+          {coverImageUrl ? (
+            <img
+              src={coverImageUrl}
+              alt={listing.title}
+              className={`w-full object-cover transition-transform duration-300 group-hover:scale-[1.02] ${compact ? "aspect-[3/4]" : "aspect-[3/4]"}`}
+            />
+          ) : (
+            <div
+              className={`w-full bg-gradient-to-br from-muted/70 via-muted/40 to-background ${compact ? "aspect-[3/4]" : "aspect-[3/4]"}`}
+              aria-label={`${listing.title} placeholder image`}
+            />
+          )}
           <div className="absolute inset-x-0 bottom-0 p-2.5 bg-gradient-to-t from-black/75 to-transparent">
             <div className="flex items-center justify-between text-white">
               <span className="inline-flex items-center gap-1 text-xs font-semibold">

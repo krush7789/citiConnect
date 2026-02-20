@@ -24,6 +24,10 @@ export default defineConfig({
         target: backendOrigin,
         changeOrigin: true,
       },
+      "/uploads": {
+        target: backendOrigin,
+        changeOrigin: true,
+      },
     },
   },
 })

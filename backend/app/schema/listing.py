@@ -33,6 +33,8 @@ class ListingItem(BaseModel):
     type: ListingType
     title: str
     category: str | None = None
+    cover_image_url: str | None = None
+    gallery_image_urls: list[str] | None = None
     city: CityRef
     price_min: Decimal | None = None
     price_max: Decimal | None = None
@@ -50,8 +52,12 @@ class ListingFiltersResponse(BaseModel):
 
 class OccurrenceItem(BaseModel):
     id: UUID
+    venue_id: UUID | None = None
+    venue_name: str | None = None
     start_time: datetime
     end_time: datetime | None = None
+    provider_sub_location: str | None = None
+    capacity_total: int | None = None
     capacity_remaining: int
     status: OccurrenceStatus
     ticket_pricing: dict[str, float] | None = None

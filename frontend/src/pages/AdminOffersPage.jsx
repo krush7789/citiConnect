@@ -1,9 +1,16 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useFormik } from "formik";
+import * as Yup from "yup";
 import { adminService } from "@/api/services";
 import { formatDateOnly } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import PaginationControls from "@/components/PaginationControls";
+import AdminDataTable from "@/components/admin/AdminDataTable";
+import { AdminEmptyState, AdminInlineState, AdminPageHeader } from "@/components/admin/AdminPagePrimitives";
 
 const initialForm = {
   code: "",
@@ -18,128 +25,203 @@ const initialForm = {
   user_usage_limit: "",
   is_active: true,
 };
+const OFFERS_PAGE_SIZE = 20;
+
+const validationSchema = Yup.object({
+  code: Yup.string().trim().required("Code is required."),
+  title: Yup.string().trim().required("Title is required."),
+  discount_type: Yup.string().oneOf(["FLAT", "PERCENTAGE"]).required("Discount type is required."),
+  discount_value: Yup.number().typeError("Discount value must be a number.").moreThan(0, "Discount value must be greater than 0.").required("Discount value is required."),
+  min_order_value: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Min order must be >= 0."),
+  max_discount_value: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Max discount must be >= 0."),
+  usage_limit: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Usage limit must be >= 0."),
+  user_usage_limit: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Per-user limit must be >= 0."),
+});
 
 const AdminOffersPage = () => {
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [items, setItems] = useState([]);
-  const [form, setForm] = useState(initialForm);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [page, setPage] = useState(1);
+  const queryClient = useQueryClient();
+  const offersQuery = useQuery({
+    queryKey: ["admin-offers", page],
+    queryFn: () => adminService.getOffers({ page, page_size: OFFERS_PAGE_SIZE }),
+  });
 
-  useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-    setError("");
-    adminService
-      .getOffers({ page: 1, page_size: 200 })
-      .then((response) => {
-        if (!mounted) return;
-        setItems(response.items || []);
-      })
-      .catch((err) => {
-        if (!mounted) return;
-        setError(err?.normalized?.message || "Failed to load offers.");
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [refreshKey]);
+  const createOfferMutation = useMutation({
+    mutationFn: (payload) => adminService.createOffer(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-offers"] });
+    },
+  });
+  const toggleOfferMutation = useMutation({
+    mutationFn: ({ id, is_active }) => adminService.updateOffer(id, { is_active }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-offers"] });
+    },
+  });
 
-  const onCreateOffer = async (event) => {
-    event.preventDefault();
-    setSaving(true);
+  const items = offersQuery.data?.items || [];
+  const pageMeta = useMemo(
+    () => ({
+      page: offersQuery.data?.page || page,
+      total_pages: offersQuery.data?.total_pages || 1,
+      total: offersQuery.data?.total || 0,
+    }),
+    [offersQuery.data, page]
+  );
+  const loading = offersQuery.isLoading;
+  const saving = createOfferMutation.isPending;
+  const formik = useFormik({
+    initialValues: initialForm,
+    validationSchema,
+    onSubmit: async (values) => {
+      setError("");
+      try {
+        await createOfferMutation.mutateAsync({
+          code: values.code,
+          title: values.title,
+          discount_type: values.discount_type,
+          discount_value: Number(values.discount_value || 0),
+          min_order_value: values.min_order_value === "" ? 0 : Number(values.min_order_value || 0),
+          max_discount_value: values.max_discount_value === "" ? 0 : Number(values.max_discount_value || 0),
+          valid_from: values.valid_from ? new Date(values.valid_from).toISOString() : undefined,
+          valid_until: values.valid_until ? new Date(values.valid_until).toISOString() : undefined,
+          usage_limit: values.usage_limit === "" ? 0 : Number(values.usage_limit || 0),
+          user_usage_limit: values.user_usage_limit === "" ? 0 : Number(values.user_usage_limit || 0),
+          is_active: values.is_active,
+        });
+        formik.resetForm();
+        setPage(1);
+      } catch (err) {
+        setError(err?.normalized?.message || "Unable to create offer.");
+      }
+    },
+  });
+
+  const toggleOfferState = useCallback(async (offer) => {
     setError("");
     try {
-      await adminService.createOffer({
-        code: form.code,
-        title: form.title,
-        discount_type: form.discount_type,
-        discount_value: Number(form.discount_value || 0),
-        min_order_value: Number(form.min_order_value || 0),
-        max_discount_value: Number(form.max_discount_value || 0),
-        valid_from: form.valid_from ? new Date(form.valid_from).toISOString() : undefined,
-        valid_until: form.valid_until ? new Date(form.valid_until).toISOString() : undefined,
-        usage_limit: Number(form.usage_limit || 0),
-        user_usage_limit: Number(form.user_usage_limit || 0),
-        is_active: form.is_active,
-      });
-      setForm(initialForm);
-      setRefreshKey((prev) => prev + 1);
-    } catch (err) {
-      setError(err?.normalized?.message || "Unable to create offer.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const toggleOfferState = async (offer) => {
-    setError("");
-    try {
-      await adminService.updateOffer(offer.id, { is_active: !offer.is_active });
-      setRefreshKey((prev) => prev + 1);
+      await toggleOfferMutation.mutateAsync({ id: offer.id, is_active: !offer.is_active });
     } catch (err) {
       setError(err?.normalized?.message || "Unable to update offer.");
     }
-  };
+  }, [toggleOfferMutation]);
+
+  const columns = useMemo(
+    () => [
+      {
+        accessorKey: "code",
+        header: "Code",
+        cell: ({ row }) => <span className="font-semibold">{row.original.code}</span>,
+      },
+      {
+        accessorKey: "title",
+        header: "Title",
+      },
+      {
+        accessorKey: "discount_type",
+        header: "Type",
+      },
+      {
+        accessorKey: "discount_value",
+        header: "Discount",
+        cell: ({ row }) => Number(row.original.discount_value || 0).toLocaleString("en-IN"),
+      },
+      {
+        accessorKey: "min_order_value",
+        header: "Min order",
+        cell: ({ row }) => Number(row.original.min_order_value || 0).toLocaleString("en-IN"),
+      },
+      {
+        accessorKey: "valid_until",
+        header: "Valid until",
+        cell: ({ row }) => formatDateOnly(row.original.valid_until),
+      },
+      {
+        accessorKey: "is_active",
+        header: "Status",
+        cell: ({ row }) => (row.original.is_active ? "ACTIVE" : "INACTIVE"),
+      },
+      {
+        id: "action",
+        header: "Action",
+        cell: ({ row }) => (
+          <Button size="sm" variant="outline" onClick={() => toggleOfferState(row.original)}>
+            {row.original.is_active ? "Deactivate" : "Activate"}
+          </Button>
+        ),
+      },
+    ],
+    [toggleOfferState]
+  );
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Offers Management</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Create offers and toggle active/inactive states.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Offers Management"
+        description="Create offers and toggle active/inactive states."
+      />
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {loading ? <p className="text-sm text-muted-foreground">Loading offers...</p> : null}
+      {offersQuery.error?.normalized?.message && !error ? (
+        <AdminInlineState tone="error">{offersQuery.error.normalized.message}</AdminInlineState>
+      ) : null}
+      {error ? <AdminInlineState tone="error">{error}</AdminInlineState> : null}
+      {loading ? <AdminInlineState>Loading offers...</AdminInlineState> : null}
 
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">Create offer</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={onCreateOffer} className="space-y-4">
+          <form onSubmit={formik.handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Code</p>
+                <p className="text-xs text-muted-foreground mb-1">Code <span className="text-destructive">*</span></p>
                 <Input
-                  value={form.code}
-                  onChange={(event) => setForm((prev) => ({ ...prev, code: event.target.value.toUpperCase() }))}
-                  required
+                  name="code"
+                  value={formik.values.code}
+                  onChange={(event) => formik.setFieldValue("code", event.target.value.toUpperCase())}
+                  onBlur={formik.handleBlur}
                 />
+                {formik.touched.code && formik.errors.code ? <p className="text-xs text-destructive mt-1">{formik.errors.code}</p> : null}
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Title</p>
+                <p className="text-xs text-muted-foreground mb-1">Title <span className="text-destructive">*</span></p>
                 <Input
-                  value={form.title}
-                  onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-                  required
+                  name="title"
+                  value={formik.values.title}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
                 />
+                {formik.touched.title && formik.errors.title ? <p className="text-xs text-destructive mt-1">{formik.errors.title}</p> : null}
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Discount type</p>
-                <select
-                  value={form.discount_type}
-                  onChange={(event) => setForm((prev) => ({ ...prev, discount_type: event.target.value }))}
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                <p className="text-xs text-muted-foreground mb-1">Discount type <span className="text-destructive">*</span></p>
+                <Select
+                  name="discount_type"
+                  value={formik.values.discount_type}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
                 >
                   <option value="FLAT">FLAT</option>
                   <option value="PERCENTAGE">PERCENTAGE</option>
-                </select>
+                </Select>
+                {formik.touched.discount_type && formik.errors.discount_type ? (
+                  <p className="text-xs text-destructive mt-1">{formik.errors.discount_type}</p>
+                ) : null}
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Discount value</p>
+                <p className="text-xs text-muted-foreground mb-1">Discount value <span className="text-destructive">*</span></p>
                 <Input
+                  name="discount_value"
                   type="number"
-                  value={form.discount_value}
-                  onChange={(event) => setForm((prev) => ({ ...prev, discount_value: event.target.value }))}
-                  required
+                  value={formik.values.discount_value}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
                 />
+                {formik.touched.discount_value && formik.errors.discount_value ? (
+                  <p className="text-xs text-destructive mt-1">{formik.errors.discount_value}</p>
+                ) : null}
               </div>
             </div>
 
@@ -147,48 +229,60 @@ const AdminOffersPage = () => {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Min order</p>
                 <Input
+                  name="min_order_value"
                   type="number"
-                  value={form.min_order_value}
-                  onChange={(event) => setForm((prev) => ({ ...prev, min_order_value: event.target.value }))}
+                  value={formik.values.min_order_value}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
                 />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Max discount</p>
                 <Input
+                  name="max_discount_value"
                   type="number"
-                  value={form.max_discount_value}
-                  onChange={(event) => setForm((prev) => ({ ...prev, max_discount_value: event.target.value }))}
+                  value={formik.values.max_discount_value}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
                 />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Valid from</p>
                 <Input
+                  name="valid_from"
                   type="datetime-local"
-                  value={form.valid_from}
-                  onChange={(event) => setForm((prev) => ({ ...prev, valid_from: event.target.value }))}
+                  value={formik.values.valid_from}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
                 />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Valid until</p>
                 <Input
+                  name="valid_until"
                   type="datetime-local"
-                  value={form.valid_until}
-                  onChange={(event) => setForm((prev) => ({ ...prev, valid_until: event.target.value }))}
+                  value={formik.values.valid_until}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
                 />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Usage limits</p>
                 <div className="grid grid-cols-2 gap-2">
                   <Input
+                    name="usage_limit"
                     type="number"
-                    value={form.usage_limit}
-                    onChange={(event) => setForm((prev) => ({ ...prev, usage_limit: event.target.value }))}
+                    value={formik.values.usage_limit}
+                    onChange={formik.handleChange}
+                    onBlur={formik.handleBlur}
                     placeholder="Total"
                   />
                   <Input
+                    name="user_usage_limit"
                     type="number"
-                    value={form.user_usage_limit}
-                    onChange={(event) => setForm((prev) => ({ ...prev, user_usage_limit: event.target.value }))}
+                    value={formik.values.user_usage_limit}
+                    onChange={formik.handleChange}
+                    onBlur={formik.handleBlur}
                     placeholder="Per user"
                   />
                 </div>
@@ -199,15 +293,15 @@ const AdminOffersPage = () => {
               <input
                 id="create_offer_active"
                 type="checkbox"
-                checked={Boolean(form.is_active)}
-                onChange={(event) => setForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                checked={Boolean(formik.values.is_active)}
+                onChange={(event) => formik.setFieldValue("is_active", event.target.checked)}
               />
               <label htmlFor="create_offer_active" className="text-sm">
                 Offer is active
               </label>
             </div>
 
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || !formik.isValid}>
               {saving ? "Creating..." : "Create offer"}
             </Button>
           </form>
@@ -220,43 +314,20 @@ const AdminOffersPage = () => {
         </CardHeader>
         <CardContent>
           {!loading && !items.length ? (
-            <div className="rounded-lg border p-5 text-sm text-muted-foreground">No offers found.</div>
+            <AdminEmptyState message="No offers found." />
           ) : null}
           {items.length > 0 ? (
-            <div className="rounded-lg border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="text-left p-3">Code</th>
-                    <th className="text-left p-3">Title</th>
-                    <th className="text-left p-3">Type</th>
-                    <th className="text-left p-3">Discount</th>
-                    <th className="text-left p-3">Min order</th>
-                    <th className="text-left p-3">Valid until</th>
-                    <th className="text-left p-3">Status</th>
-                    <th className="text-left p-3">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((offer) => (
-                    <tr key={offer.id} className="border-t">
-                      <td className="p-3 font-semibold">{offer.code}</td>
-                      <td className="p-3">{offer.title}</td>
-                      <td className="p-3">{offer.discount_type}</td>
-                      <td className="p-3">{Number(offer.discount_value || 0).toLocaleString("en-IN")}</td>
-                      <td className="p-3">{Number(offer.min_order_value || 0).toLocaleString("en-IN")}</td>
-                      <td className="p-3">{formatDateOnly(offer.valid_until)}</td>
-                      <td className="p-3">{offer.is_active ? "ACTIVE" : "INACTIVE"}</td>
-                      <td className="p-3">
-                        <Button size="sm" variant="outline" onClick={() => toggleOfferState(offer)}>
-                          {offer.is_active ? "Deactivate" : "Activate"}
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <AdminDataTable columns={columns} data={items} />
+              <PaginationControls
+                page={pageMeta.page}
+                totalPages={pageMeta.total_pages}
+                totalItems={pageMeta.total}
+                disabled={loading}
+                onPrevious={() => setPage((prev) => Math.max(1, prev - 1))}
+                onNext={() => setPage((prev) => Math.min(pageMeta.total_pages || 1, prev + 1))}
+              />
+            </>
           ) : null}
         </CardContent>
       </Card>

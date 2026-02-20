@@ -18,6 +18,7 @@ const HeroCarousel = ({ slides = [], autoPlayMs = 4000, onCta }) => {
   }, [slides.length, autoPlayMs]);
 
   const slide = slides[current];
+  const posterUrl = typeof slide?.poster === "string" ? slide.poster.trim() : "";
 
   const accentOverlay = useMemo(() => {
     const color = slide?.bgColor || "#111827";
@@ -30,7 +31,9 @@ const HeroCarousel = ({ slides = [], autoPlayMs = 4000, onCta }) => {
     <section className="py-6">
       <div className="relative overflow-hidden rounded-[28px] border min-h-[330px] md:min-h-[420px] bg-zinc-950">
         <div className="absolute inset-0">
-          <img src={slide.poster} alt={slide.title} className="h-full w-full object-cover scale-110 blur-2xl opacity-35" />
+          {posterUrl ? (
+            <img src={posterUrl} alt={slide.title} className="h-full w-full object-cover scale-110 blur-2xl opacity-35" />
+          ) : null}
           <div className="absolute inset-0 bg-gradient-to-r from-white/95 via-white/85 to-white/38" />
           <div className="absolute inset-0" style={{ background: accentOverlay }} />
         </div>
@@ -75,7 +78,11 @@ const HeroCarousel = ({ slides = [], autoPlayMs = 4000, onCta }) => {
             ) : null}
           </div>
           <div className="justify-self-center md:justify-self-end w-[220px] md:w-[330px] aspect-[3/4] rounded-2xl overflow-hidden shadow-2xl border border-white/40">
-            <img src={slide.poster} alt={slide.title} className="h-full w-full object-cover" />
+            {posterUrl ? (
+              <img src={posterUrl} alt={slide.title} className="h-full w-full object-cover" />
+            ) : (
+              <div className="h-full w-full bg-gradient-to-br from-muted/70 via-muted/40 to-background" />
+            )}
           </div>
         </div>
 

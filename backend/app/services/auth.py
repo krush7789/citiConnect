@@ -46,7 +46,22 @@ def _token_payload(user: User) -> dict[str, str]:
     }
 
 
-async def register_user(db: AsyncSession, *, name: str, email: str, password: str) -> tuple[dict, str]:
+async def register_user(
+    db: AsyncSession,
+    *,
+    name: str,
+    email: str,
+    password: str,
+    confirm_password: str,
+) -> tuple[dict, str]:
+    if password != confirm_password:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"confirm_password": "Must match password"}},
+        )
+
     ensure_password_policy(password)
 
     existing = await get_user_by_email(db, email)

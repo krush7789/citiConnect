@@ -1,31 +1,45 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, MapPin } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import SeatMap from "@/components/SeatMap";
 import { bookingService, listingService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDateTime } from "@/lib/format";
 
 const SeatSelectionPage = () => {
   const navigate = useNavigate();
   const { listingId, occurrenceId } = useParams();
   const { requireAuth } = useAuth();
 
+  const [listing, setListing] = useState(null);
+  const [occurrence, setOccurrence] = useState(null);
   const [seatMap, setSeatMap] = useState(null);
   const [selectedSeats, setSelectedSeats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  const loadSeatMap = React.useCallback(async () => {
+    const response = await listingService.getSeatMap(occurrenceId);
+    setSeatMap(response);
+    setSelectedSeats((prev) => {
+      const available = new Set(
+        (response.seat_states || []).filter((seat) => seat.state === "AVAILABLE").map((seat) => seat.seat_id)
+      );
+      return prev.filter((seatId) => available.has(seatId));
+    });
+  }, [occurrenceId]);
+
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    listingService
-      .getSeatMap(occurrenceId)
-      .then((response) => {
+    Promise.all([loadSeatMap(), listingService.getListingById(listingId)])
+      .then(([, listingResponse]) => {
         if (!mounted) return;
-        setSeatMap(response);
+        setListing(listingResponse.listing || null);
+        const matched = (listingResponse.occurrences || []).find((item) => item.id === occurrenceId) || null;
+        setOccurrence(matched);
       })
       .catch((err) => {
         if (!mounted) return;
@@ -37,7 +51,14 @@ const SeatSelectionPage = () => {
     return () => {
       mounted = false;
     };
-  }, [occurrenceId]);
+  }, [occurrenceId, listingId, loadSeatMap]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      loadSeatMap().catch(() => {});
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [loadSeatMap]);
 
   const priceMap = useMemo(() => {
     if (Array.isArray(seatMap?.seat_layout?.categories) && seatMap.seat_layout.categories.length) {
@@ -96,10 +117,28 @@ const SeatSelectionPage = () => {
           <div>
             <h1 className="font-bold">Select seats</h1>
             <p className="text-xs text-muted-foreground">{selectedSeats.length} selected</p>
+            {occurrence ? (
+              <p className="text-xs text-muted-foreground mt-1">
+                {formatDateTime(occurrence.start_time, listing?.timezone)}
+                {" • "}
+                {occurrence.venue_name || listing?.venue?.name || listing?.address}
+              </p>
+            ) : null}
           </div>
         </div>
         <p className="text-sm font-semibold">{formatCurrency(totalAmount, "INR")}</p>
       </div>
+
+      {listing ? (
+        <div className="rounded-xl border bg-white p-4 mb-5">
+          <p className="text-xs text-muted-foreground inline-flex items-center gap-1">
+            <MapPin className="h-3 w-3" />
+            {listing.venue?.name || listing.address}
+            {occurrence?.provider_sub_location ? ` • ${occurrence.provider_sub_location}` : ""}
+          </p>
+          <h2 className="font-semibold mt-1">{listing.title}</h2>
+        </div>
+      ) : null}
 
       {loading ? <p className="text-sm text-muted-foreground">Loading seat map...</p> : null}
       {!loading && seatMap ? <SeatMap seatMap={seatMap} selectedSeats={selectedSeats} onToggleSeat={onToggleSeat} /> : null}

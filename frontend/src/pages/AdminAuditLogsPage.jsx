@@ -1,46 +1,45 @@
-import React, { useEffect, useState } from "react";
+import React, { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { adminService } from "@/api/services";
 import { formatDateTime } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import PaginationControls from "@/components/PaginationControls";
+import AdminDataTable from "@/components/admin/AdminDataTable";
+import { AdminEmptyState, AdminInlineState, AdminPageHeader } from "@/components/admin/AdminPagePrimitives";
+
+const AUDIT_LOGS_PAGE_SIZE = 50;
 
 const AdminAuditLogsPage = () => {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [items, setItems] = useState([]);
+  const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({
     action: "",
     entity_type: "",
     search: "",
   });
 
-  useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-    setError("");
-    adminService
-      .getAuditLogs({
+  const logsQuery = useQuery({
+    queryKey: ["admin-audit-logs", page, filters.action, filters.entity_type],
+    queryFn: () =>
+      adminService.getAuditLogs({
         action: filters.action || undefined,
         entity_type: filters.entity_type || undefined,
-        page: 1,
-        page_size: 300,
-      })
-      .then((response) => {
-        if (!mounted) return;
-        setItems(response.items || []);
-      })
-      .catch((err) => {
-        if (!mounted) return;
-        setError(err?.normalized?.message || "Failed to load audit logs.");
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
+        page,
+        page_size: AUDIT_LOGS_PAGE_SIZE,
+      }),
+  });
 
-    return () => {
-      mounted = false;
-    };
-  }, [filters.action, filters.entity_type]);
+  const items = logsQuery.data?.items || [];
+  const pageMeta = useMemo(
+    () => ({
+      page: logsQuery.data?.page || page,
+      total_pages: logsQuery.data?.total_pages || 1,
+      total: logsQuery.data?.total || 0,
+    }),
+    [logsQuery.data, page]
+  );
+  const loading = logsQuery.isLoading;
+  const error = logsQuery.error?.normalized?.message || "";
 
   const filteredItems = items.filter((log) => {
     if (!filters.search) return true;
@@ -55,14 +54,52 @@ const AdminAuditLogsPage = () => {
     );
   });
 
+  const columns = useMemo(
+    () => [
+      {
+        accessorKey: "created_at",
+        header: "Time",
+        cell: ({ row }) => formatDateTime(row.original.created_at),
+      },
+      {
+        accessorKey: "admin_user",
+        header: "Admin",
+        cell: ({ row }) => row.original.admin_user || "--",
+      },
+      {
+        accessorKey: "action",
+        header: "Action",
+        cell: ({ row }) => row.original.action || "--",
+      },
+      {
+        id: "entity",
+        header: "Entity",
+        cell: ({ row }) => (
+          <div>
+            <p>{row.original.entity_type || "--"}</p>
+            <p className="text-xs text-muted-foreground font-mono mt-1">{row.original.entity_id || "--"}</p>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "diff",
+        header: "Diff",
+        cell: ({ row }) => (
+          <pre className="text-xs bg-muted/40 rounded-md p-2 overflow-auto max-h-28">
+            {JSON.stringify(row.original.diff || {}, null, 2)}
+          </pre>
+        ),
+      },
+    ],
+    []
+  );
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Audit Logs</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Track admin actions with entity-level diff previews.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Audit Logs"
+        description="Track admin actions with entity-level diff previews."
+      />
 
       <Card>
         <CardContent className="pt-6">
@@ -71,7 +108,10 @@ const AdminAuditLogsPage = () => {
               <p className="text-xs text-muted-foreground mb-1">Action</p>
               <Input
                 value={filters.action}
-                onChange={(event) => setFilters((prev) => ({ ...prev, action: event.target.value.toUpperCase() }))}
+                onChange={(event) => {
+                  setPage(1);
+                  setFilters((prev) => ({ ...prev, action: event.target.value.toUpperCase() }));
+                }}
                 placeholder="CREATE_LISTING"
               />
             </div>
@@ -79,7 +119,10 @@ const AdminAuditLogsPage = () => {
               <p className="text-xs text-muted-foreground mb-1">Entity type</p>
               <Input
                 value={filters.entity_type}
-                onChange={(event) => setFilters((prev) => ({ ...prev, entity_type: event.target.value.toUpperCase() }))}
+                onChange={(event) => {
+                  setPage(1);
+                  setFilters((prev) => ({ ...prev, entity_type: event.target.value.toUpperCase() }));
+                }}
                 placeholder="LISTING / OFFER / OCCURRENCE"
               />
             </div>
@@ -95,8 +138,8 @@ const AdminAuditLogsPage = () => {
         </CardContent>
       </Card>
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {loading ? <p className="text-sm text-muted-foreground">Loading audit logs...</p> : null}
+      {error ? <AdminInlineState tone="error">{error}</AdminInlineState> : null}
+      {loading ? <AdminInlineState>Loading audit logs...</AdminInlineState> : null}
 
       <Card>
         <CardHeader>
@@ -104,40 +147,20 @@ const AdminAuditLogsPage = () => {
         </CardHeader>
         <CardContent>
           {!loading && !filteredItems.length ? (
-            <div className="rounded-lg border p-5 text-sm text-muted-foreground">No audit logs found.</div>
+            <AdminEmptyState message="No audit logs found." />
           ) : null}
           {filteredItems.length > 0 ? (
-            <div className="rounded-lg border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="text-left p-3">Time</th>
-                    <th className="text-left p-3">Admin</th>
-                    <th className="text-left p-3">Action</th>
-                    <th className="text-left p-3">Entity</th>
-                    <th className="text-left p-3">Diff</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredItems.map((log) => (
-                    <tr key={log.id} className="border-t align-top">
-                      <td className="p-3">{formatDateTime(log.created_at)}</td>
-                      <td className="p-3">{log.admin_user || "--"}</td>
-                      <td className="p-3">{log.action || "--"}</td>
-                      <td className="p-3">
-                        <p>{log.entity_type || "--"}</p>
-                        <p className="text-xs text-muted-foreground font-mono mt-1">{log.entity_id || "--"}</p>
-                      </td>
-                      <td className="p-3">
-                        <pre className="text-xs bg-muted/40 rounded-md p-2 overflow-auto max-h-28">
-                          {JSON.stringify(log.diff || {}, null, 2)}
-                        </pre>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <AdminDataTable columns={columns} data={filteredItems} />
+              <PaginationControls
+                page={pageMeta.page}
+                totalPages={pageMeta.total_pages}
+                totalItems={pageMeta.total}
+                disabled={loading}
+                onPrevious={() => setPage((prev) => Math.max(1, prev - 1))}
+                onNext={() => setPage((prev) => Math.min(pageMeta.total_pages || 1, prev + 1))}
+              />
+            </>
           ) : null}
         </CardContent>
       </Card>

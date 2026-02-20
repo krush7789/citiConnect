@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, MapPin, Search } from "lucide-react";
+import { MapPin, Search } from "lucide-react";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import SearchModal from "@/components/SearchModal";
 import ProfileDrawer from "@/components/ProfileDrawer";
 import { cityService } from "@/api/services";
@@ -18,15 +19,10 @@ const navItems = [
   { label: "Activities", path: "/activities" },
 ];
 
-const fallbackCities = [
-  { id: "city-gurugram", name: "Gurugram", state: "Haryana" },
-  { id: "city-mumbai", name: "Mumbai", state: "Maharashtra" },
-];
-
 const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, requireAuth, isAuthenticated, pendingIntent, setPendingIntent, openAuthModal } = useAuth();
+  const { user, isAuthenticated, pendingIntent, setPendingIntent, openAuthModal } = useAuth();
 
   const [cities, setCities] = useState([]);
   const [selectedCityId, setSelectedCity] = useState(getSelectedCityId());
@@ -39,25 +35,27 @@ const Navbar = () => {
       .getCities()
       .then((response) => {
         if (!mounted) return;
-        const nextCities = response.items?.length ? response.items : fallbackCities;
+        const nextCities = response.items || [];
         setCities(nextCities);
-        if (!nextCities.find((city) => city.id === selectedCityId) && nextCities[0]) {
-          setSelectedCity(nextCities[0].id);
-          setSelectedCityId(nextCities[0].id);
-        }
+        setSelectedCity((currentCityId) => {
+          if (nextCities.some((city) => city.id === currentCityId)) {
+            return currentCityId;
+          }
+          const fallbackCityId = nextCities[0]?.id || "";
+          setSelectedCityId(fallbackCityId);
+          return fallbackCityId;
+        });
       })
       .catch(() => {
         if (!mounted) return;
-        setCities(fallbackCities);
-        if (!fallbackCities.find((city) => city.id === selectedCityId)) {
-          setSelectedCity("city-gurugram");
-          setSelectedCityId("city-gurugram");
-        }
+        setCities([]);
+        setSelectedCity("");
+        setSelectedCityId("");
       });
     return () => {
       mounted = false;
     };
-  }, [selectedCityId]);
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated || !pendingIntent) return;
@@ -68,11 +66,6 @@ const Navbar = () => {
   }, [isAuthenticated, pendingIntent, navigate, setPendingIntent]);
 
   const selectedCity = useMemo(() => cities.find((city) => city.id === selectedCityId), [cities, selectedCityId]);
-
-  const onProtectedNavigate = (path) => {
-    if (requireAuth({ type: "navigate", path })) return navigate(path);
-    return null;
-  };
 
   return (
     <nav className="sticky top-0 z-40 w-full border-b bg-white/95 backdrop-blur">
@@ -85,21 +78,26 @@ const Navbar = () => {
 
             <div className="hidden md:flex items-center gap-2 border rounded-full px-3 py-1.5 bg-muted/30">
               <MapPin className="h-4 w-4 text-primary" />
-              <select
+              <Select
                 value={selectedCityId}
                 onChange={(event) => {
                   setSelectedCity(event.target.value);
                   setSelectedCityId(event.target.value);
                 }}
-                className="appearance-none bg-transparent text-sm font-medium outline-none pr-6"
+                showIcon={false}
+                wrapperClassName="w-auto"
+                className="h-auto border-0 bg-transparent p-0 pr-1 text-sm font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
               >
-                {cities.map((city) => (
-                  <option key={city.id} value={city.id}>
-                    {city.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-4 w-4 text-muted-foreground -ml-5 pointer-events-none" />
+                {cities.length ? (
+                  cities.map((city) => (
+                    <option key={city.id} value={city.id}>
+                      {city.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No cities available</option>
+                )}
+              </Select>
             </div>
           </div>
 
@@ -165,20 +163,6 @@ const Navbar = () => {
               </Link>
             );
           })}
-          <button
-            type="button"
-            onClick={() => onProtectedNavigate("/wishlist")}
-            className="whitespace-nowrap px-3 py-1.5 rounded-full text-xs border"
-          >
-            Wishlist
-          </button>
-          <button
-            type="button"
-            onClick={() => onProtectedNavigate("/bookings")}
-            className="whitespace-nowrap px-3 py-1.5 rounded-full text-xs border"
-          >
-            Bookings
-          </button>
         </div>
 
         {selectedCity ? (

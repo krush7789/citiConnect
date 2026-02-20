@@ -5,9 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "apscheduler>=3.10.4",
     "asyncpg>=0.30.0",
     "bcrypt>=5.0.0",
     "fastapi>=0.129.0",
+    "fastapi-pagination>=0.15.10",
+    "fastapi-security>=0.1.0",
     "pydantic-settings>=2.11.0",
     "sqlalchemy>=2.0.46",
     "uvicorn>=0.40.0",

@@ -29,6 +29,15 @@ const SearchModal = ({ onClose }) => {
 
   useEffect(() => {
     let mounted = true;
+    const hasSearchInput = Boolean(query.trim()) || Boolean(activeType);
+    if (!hasSearchInput) {
+      setLoading(false);
+      setResults([]);
+      return () => {
+        mounted = false;
+      };
+    }
+
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
@@ -39,6 +48,8 @@ const SearchModal = ({ onClose }) => {
           page_size: 8,
         });
         if (mounted) setResults(response.items || []);
+      } catch {
+        if (mounted) setResults([]);
       } finally {
         if (mounted) setLoading(false);
       }

@@ -11,6 +11,9 @@ const SeatMap = ({ seatMap, selectedSeats, onToggleSeat }) => {
 
   const seatStatesById = Object.fromEntries((seatMap.seat_states || []).map((state) => [state.seat_id, state]));
   const selectedSet = new Set(selectedSeats);
+  const aislesAfter = Array.isArray(seatMap?.seat_layout?.aisles_after)
+    ? seatMap.seat_layout.aisles_after.map((value) => Number(value)).filter((value) => Number.isInteger(value))
+    : [];
 
   return (
     <div className="overflow-x-auto pb-8">
@@ -31,20 +34,22 @@ const SeatMap = ({ seatMap, selectedSeats, onToggleSeat }) => {
                   const seatState = seatStatesById[seatId] || { state: "BOOKED" };
                   const isSelected = selectedSet.has(seatId);
                   const isDisabled = seatState.state !== "AVAILABLE";
+                  const needsAisleGap = aislesAfter.includes(index);
                   return (
-                    <button
-                      key={seatId}
-                      type="button"
-                      disabled={isDisabled}
-                      onClick={() => onToggleSeat(seatId, seatState)}
-                      className={`h-7 w-7 rounded text-[10px] border transition ${
-                        isSelected
-                          ? "bg-primary border-primary text-white"
-                          : stateClassMap[seatState.state] || "bg-zinc-100 border-zinc-200"
-                      }`}
-                    >
-                      {index + 1}
-                    </button>
+                    <div key={seatId} className={needsAisleGap ? "mr-3" : ""}>
+                      <button
+                        type="button"
+                        disabled={isDisabled}
+                        onClick={() => onToggleSeat(seatId, seatState)}
+                        className={`h-7 w-7 rounded text-[10px] border transition ${
+                          isSelected
+                            ? "bg-primary border-primary text-white"
+                            : stateClassMap[seatState.state] || "bg-zinc-100 border-zinc-200"
+                        }`}
+                      >
+                        {index + 1}
+                      </button>
+                    </div>
                   );
                 })}
               </div>

@@ -1,18 +1,32 @@
 import React from "react";
 import { Heart, MapPin } from "lucide-react";
 import { Link } from "react-router-dom";
+import { formatDistanceKm } from "@/lib/format";
 
-const EventCard = ({ listing, onToggleWishlist }) => {
+const EventCard = ({ listing, onToggleWishlist, showDistance = false }) => {
+  const distanceLabel = showDistance ? formatDistanceKm(listing.distance_km) : "";
+  const coverImageUrl =
+    (typeof listing.cover_image_url === "string" && listing.cover_image_url.trim()) ||
+    (typeof listing.gallery_image_urls?.[0] === "string" && listing.gallery_image_urls[0].trim()) ||
+    null;
+
   return (
     <article className="group">
       <Link to={`/listings/${listing.id}`} className="block">
         <div className="rounded-2xl overflow-hidden border bg-white shadow-sm">
           <div className="relative aspect-[1/1.05] overflow-hidden">
-            <img
-              src={listing.cover_image_url}
-              alt={listing.title}
-              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-            />
+            {coverImageUrl ? (
+              <img
+                src={coverImageUrl}
+                alt={listing.title}
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+              />
+            ) : (
+              <div
+                className="w-full h-full bg-gradient-to-br from-muted/70 via-muted/40 to-background"
+                aria-label={`${listing.title} placeholder image`}
+              />
+            )}
             {listing.offer_text ? (
               <span className="absolute bottom-2 left-2 right-2 bg-black/70 text-white text-[11px] px-2 py-1 rounded-md line-clamp-1">
                 {listing.offer_text}
@@ -26,6 +40,7 @@ const EventCard = ({ listing, onToggleWishlist }) => {
               <MapPin className="h-3 w-3" />
               {listing.address || listing.city}
             </p>
+            {showDistance && distanceLabel ? <p className="text-xs text-muted-foreground">{distanceLabel}</p> : null}
             <p className="text-xs text-muted-foreground">From Rs {listing.price_min}</p>
           </div>
         </div>

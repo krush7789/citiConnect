@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Select, exists, func, literal, select
+from sqlalchemy import Select, and_, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import Booking
@@ -15,12 +15,56 @@ from app.models.venue import Venue
 from app.models.wishlist import Wishlist
 from app.services.geo import haversine_sql_expression
 
+NATIONWIDE_CITY_ALIASES = ("all india", "nationwide", "pan india", "pan-india")
+
+
+async def _get_nationwide_city_ids(db: AsyncSession) -> list[UUID]:
+    rows = (
+        await db.execute(
+            select(City.id).where(func.lower(City.name).in_(NATIONWIDE_CITY_ALIASES))
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+def _apply_city_scope_filter(
+    stmt,
+    *,
+    city_id: UUID,
+    nationwide_city_ids: list[UUID] | None,
+    date_from: datetime | None,
+    date_to: datetime | None,
+):
+    if not nationwide_city_ids:
+        return stmt.where(Listing.city_id == city_id)
+
+    city_occurrence_exists = select(Occurrence.id).where(
+        Occurrence.listing_id == Listing.id,
+        Occurrence.city_id == city_id,
+        Occurrence.status == OccurrenceStatus.SCHEDULED,
+    )
+    if date_from:
+        city_occurrence_exists = city_occurrence_exists.where(Occurrence.start_time >= date_from)
+    if date_to:
+        city_occurrence_exists = city_occurrence_exists.where(Occurrence.start_time <= date_to)
+
+    return stmt.where(
+        or_(
+            Listing.city_id == city_id,
+            and_(
+                Listing.city_id.in_(nationwide_city_ids),
+                exists(city_occurrence_exists),
+            ),
+        )
+    )
+
 
 def _apply_common_listing_filters(
     stmt,
     *,
     types: list[ListingType] | None,
     city_id: UUID | None,
+    nationwide_city_ids: list[UUID] | None,
     category: str | None,
     q: str | None,
     is_featured: bool | None,
@@ -34,7 +78,13 @@ def _apply_common_listing_filters(
     if types:
         stmt = stmt.where(Listing.type.in_(types))
     if city_id:
-        stmt = stmt.where(Listing.city_id == city_id)
+        stmt = _apply_city_scope_filter(
+            stmt,
+            city_id=city_id,
+            nationwide_city_ids=nationwide_city_ids,
+            date_from=date_from,
+            date_to=date_to,
+        )
     if category:
         stmt = stmt.where(Listing.category == category)
     if q:
@@ -81,12 +131,21 @@ async def list_listings(
     user_lon: float | None,
     radius_km: float | None,
 ):
+    nationwide_city_ids = await _get_nationwide_city_ids(db) if city_id else []
+
+    now = datetime.now(UTC)
     next_occurrence_subq = (
         select(
             Occurrence.listing_id.label("listing_id"),
             func.min(Occurrence.start_time).label("next_start_time"),
         )
-        .where(Occurrence.status == OccurrenceStatus.SCHEDULED)
+        .where(
+            Occurrence.status == OccurrenceStatus.SCHEDULED,
+            or_(
+                Occurrence.end_time >= now,
+                (Occurrence.end_time.is_(None) & (Occurrence.start_time >= now)),
+            ),
+        )
         .group_by(Occurrence.listing_id)
         .subquery()
     )
@@ -124,6 +183,7 @@ async def list_listings(
         stmt,
         types=types,
         city_id=city_id,
+        nationwide_city_ids=nationwide_city_ids,
         category=category,
         q=q,
         is_featured=is_featured,
@@ -136,6 +196,7 @@ async def list_listings(
         count_stmt,
         types=types,
         city_id=city_id,
+        nationwide_city_ids=nationwide_city_ids,
         category=category,
         q=q,
         is_featured=is_featured,
@@ -183,9 +244,18 @@ async def get_next_occurrences_for_listing_ids(
     if not listing_ids:
         return {}
 
+    now = datetime.now(UTC)
+
     stmt = (
         select(Occurrence)
-        .where(Occurrence.listing_id.in_(listing_ids), Occurrence.status == OccurrenceStatus.SCHEDULED)
+        .where(
+            Occurrence.listing_id.in_(listing_ids),
+            Occurrence.status == OccurrenceStatus.SCHEDULED,
+            or_(
+                Occurrence.end_time >= now,
+                (Occurrence.end_time.is_(None) & (Occurrence.start_time >= now)),
+            ),
+        )
         .order_by(Occurrence.listing_id.asc(), Occurrence.start_time.asc())
     )
 
@@ -246,12 +316,16 @@ async def get_confirmed_booked_seats(db: AsyncSession, occurrence_id: UUID) -> s
     return seats
 
 
-async def get_active_seat_locks(db: AsyncSession, occurrence_id: UUID) -> dict[str, SeatLock]:
-    now = datetime.now(UTC)
+async def get_active_seat_locks(
+    db: AsyncSession,
+    occurrence_id: UUID,
+    now: datetime | None = None,
+) -> dict[str, SeatLock]:
+    reference = now or datetime.now(UTC)
     stmt = select(SeatLock).where(
         SeatLock.occurrence_id == occurrence_id,
         SeatLock.status == SeatLockStatus.ACTIVE,
-        SeatLock.expires_at > now,
+        SeatLock.expires_at > reference,
     )
     rows = (await db.execute(stmt)).scalars().all()
     return {row.seat_id: row for row in rows}
@@ -268,7 +342,14 @@ async def get_filters_metadata(
     )
 
     if city_id:
-        stmt = stmt.where(Listing.city_id == city_id)
+        nationwide_city_ids = await _get_nationwide_city_ids(db)
+        stmt = _apply_city_scope_filter(
+            stmt,
+            city_id=city_id,
+            nationwide_city_ids=nationwide_city_ids,
+            date_from=None,
+            date_to=None,
+        )
     if types:
         stmt = stmt.where(Listing.type.in_(types))
 

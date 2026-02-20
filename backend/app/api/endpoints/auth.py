@@ -44,6 +44,7 @@ async def register(payload: RegisterRequest, response: Response, db: AsyncSessio
         name=payload.name,
         email=payload.email,
         password=payload.password,
+        confirm_password=payload.confirm_password,
     )
     _set_refresh_cookie(response, refresh_token)
     return data

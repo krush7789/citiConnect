@@ -1,6 +1,5 @@
-import api, { createError } from "@/api/client";
+import api, { createError, getStoredToken } from "@/api/client";
 import {
-  initialMockAuditLogs,
   initialMockBookings,
   initialMockNotifications,
   initialMockWishlist,
@@ -16,6 +15,7 @@ import {
 import { normalizeBooking, normalizeCity, normalizeListingCard, normalizeNotification, normalizeOccurrence, normalizePaginated, normalizeUser } from "@/lib/contracts";
 import { BOOKING_STATUS, LISTING_STATUS, LISTING_TYPE, OCCURRENCE_STATUS, USER_ROLE } from "@/lib/enums";
 import { formatDateTime } from "@/lib/format";
+import { haversineDistanceKm, toCoordinate } from "@/lib/geo";
 
 const FORCE_MOCK = import.meta.env.VITE_FORCE_MOCK === "true";
 
@@ -25,10 +25,11 @@ const STORE_KEYS = {
   NOTIFICATIONS: "citiconnect_mock_notifications",
   OFFER_USAGE: "citiconnect_mock_offer_usage",
   IDEMPOTENCY: "citiconnect_mock_idempotency",
+  ADMIN_CITIES: "citiconnect_mock_admin_cities",
+  ADMIN_VENUES: "citiconnect_mock_admin_venues",
   ADMIN_LISTINGS: "citiconnect_mock_admin_listings",
   ADMIN_OCCURRENCES: "citiconnect_mock_admin_occurrences",
   ADMIN_OFFERS: "citiconnect_mock_admin_offers",
-  ADMIN_AUDIT_LOGS: "citiconnect_mock_admin_audit_logs",
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -72,29 +73,110 @@ const getCollectionState = (key, fallback) => {
   return seeded;
 };
 
+const getCitiesState = () => getCollectionState(STORE_KEYS.ADMIN_CITIES, mockCities);
+const getVenuesState = () => getCollectionState(STORE_KEYS.ADMIN_VENUES, mockVenues);
+
 const getListingsState = () => getCollectionState(STORE_KEYS.ADMIN_LISTINGS, mockListings);
-const setListingsState = (value) => setState(STORE_KEYS.ADMIN_LISTINGS, value);
-const getOccurrencesState = () => getCollectionState(STORE_KEYS.ADMIN_OCCURRENCES, mockOccurrences);
-const setOccurrencesState = (value) => setState(STORE_KEYS.ADMIN_OCCURRENCES, value);
+const seededOccurrenceLayouts = Object.fromEntries(
+  mockOccurrences
+    .filter((occurrence) => occurrence?.id && occurrence?.seat_layout)
+    .map((occurrence) => [occurrence.id, occurrence.seat_layout])
+);
+
+const syncOccurrenceSeatLayouts = (occurrences) => {
+  if (!Array.isArray(occurrences)) return { items: [], mutated: false };
+  let mutated = false;
+  const items = occurrences.map((occurrence) => {
+    const seededLayout = seededOccurrenceLayouts[occurrence?.id];
+    if (!seededLayout || occurrence?.seat_layout) return occurrence;
+    mutated = true;
+    return { ...occurrence, seat_layout: JSON.parse(JSON.stringify(seededLayout)) };
+  });
+  return { items, mutated };
+};
+
+const getOccurrencesState = () => {
+  const existing = getCollectionState(STORE_KEYS.ADMIN_OCCURRENCES, mockOccurrences);
+  const { items, mutated } = syncOccurrenceSeatLayouts(existing);
+  if (mutated) setState(STORE_KEYS.ADMIN_OCCURRENCES, items);
+  return items;
+};
 const getOffersState = () => getCollectionState(STORE_KEYS.ADMIN_OFFERS, mockOffers);
-const setOffersState = (value) => setState(STORE_KEYS.ADMIN_OFFERS, value);
-const getAuditLogsState = () => getCollectionState(STORE_KEYS.ADMIN_AUDIT_LOGS, initialMockAuditLogs);
-const setAuditLogsState = (value) => setState(STORE_KEYS.ADMIN_AUDIT_LOGS, value);
 
 const withFallback = async (liveHandler, mockHandler, options = {}) => {
   if (FORCE_MOCK) return mockHandler();
   try {
     return await liveHandler();
   } catch (error) {
+    const allowRuntimeFallback = options.allowRuntimeFallback === true;
+    if (!allowRuntimeFallback) {
+      throw normalizeServiceError(error);
+    }
+
     const status = error?.response?.status;
     const fallbackStatuses = options.fallbackStatuses || [404, 500, 502, 503, 504];
     if (!error?.response || fallbackStatuses.includes(status)) return mockHandler();
-    throw error;
+    throw normalizeServiceError(error);
   }
 };
 
+const normalizeServiceError = (error) => {
+  if (error?.normalized) return error;
+  const envelope = error?.response?.data?.error;
+  return createError(envelope?.code || "REQUEST_FAILED", envelope?.message || error?.message || "Request failed", envelope?.details || {});
+};
+
+const adminLiveCall = async (liveHandler, transform = (data) => data) => {
+  try {
+    const response = await liveHandler();
+    return transform(response?.data, response);
+  } catch (error) {
+    throw normalizeServiceError(error);
+  }
+};
+
+const adminPaginatedCall = (liveHandler) => adminLiveCall(liveHandler, (data) => normalizePaginated(data, (item) => item));
+
 const nowIso = () => new Date().toISOString();
 const generateId = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+const isPresent = (value) => value !== undefined && value !== null && String(value).trim() !== "";
+const USER_ME_CACHE_TTL_MS = 15 * 1000;
+let userMeInFlight = null;
+let userMeCache = {
+  token: "",
+  user: null,
+  fetchedAt: 0,
+};
+
+const readUserMeCache = () => {
+  const token = getStoredToken() || "";
+  if (!token) return null;
+  if (!userMeCache.user) return null;
+  if (userMeCache.token !== token) return null;
+  if (Date.now() - Number(userMeCache.fetchedAt || 0) > USER_ME_CACHE_TTL_MS) return null;
+  return userMeCache.user;
+};
+
+const writeUserMeCache = (user) => {
+  const token = getStoredToken() || "";
+  if (!token || !user) {
+    userMeCache = { token: "", user: null, fetchedAt: 0 };
+    return;
+  }
+  userMeCache = {
+    token,
+    user,
+    fetchedAt: Date.now(),
+  };
+};
+
+const fileToDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read selected file"));
+    reader.readAsDataURL(file);
+  });
 
 const getCurrentUser = () => safeJsonParse(localStorage.getItem("citiconnect_user"), null);
 const getCurrentUserId = () => getCurrentUser()?.id || mockUser.id;
@@ -110,7 +192,7 @@ const findOccurrence = (occurrenceId) => getOccurrencesState().find((occ) => occ
 const findListing = (listingId) => getListingsState().find((listing) => listing.id === listingId);
 
 const listingWithComputedFields = (listing, userWishlist) => {
-  const venue = mockVenues.find((item) => item.id === listing.venue_id);
+  const venue = getVenuesState().find((item) => item.id === listing.venue_id);
   const occurrences = listOccurrencesByListing(listing.id).filter((occ) => occ.status === OCCURRENCE_STATUS.SCHEDULED);
   const sorted = [...occurrences].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   const nextOccurrence = sorted[0] || null;
@@ -126,7 +208,7 @@ const listingWithComputedFields = (listing, userWishlist) => {
           longitude: venue.longitude,
         }
       : listing.venue,
-    city: mockCities.find((city) => city.id === listing.city_id)?.name || listing.city || "Gurugram",
+    city: getCitiesState().find((city) => city.id === listing.city_id)?.name || listing.city || "Gurugram",
     is_wishlisted: userWishlist.includes(listing.id),
     smart_date_label: nextOccurrence ? formatDateTime(nextOccurrence.start_time, listing.timezone) : listing.smart_date_label,
     next_occurrence: nextOccurrence
@@ -249,19 +331,35 @@ const deriveQuantityAndPrice = ({ occurrence, seatIds, quantity, ticketBreakdown
     };
   }
 
-  const safeQuantity = Number(quantity || 1);
-  const firstPrice = Object.values(occurrence.ticket_pricing || {})[0];
-  const unitPrice = Number(firstPrice || 0);
-  const breakdownQuantity =
-    ticketBreakdown && Object.keys(ticketBreakdown).length
-      ? Object.values(ticketBreakdown).reduce((sum, value) => sum + Number(value || 0), 0)
-      : safeQuantity;
-  const normalizedQuantity = Math.max(1, breakdownQuantity || safeQuantity);
+  const safeQuantity = Math.max(1, Number(quantity || 1));
+  const pricingMap = Object.fromEntries(
+    Object.entries(occurrence.ticket_pricing || {}).map(([key, value]) => [String(key).toUpperCase(), Number(value || 0)])
+  );
+  const defaultTier = Object.keys(pricingMap)[0] || "STANDARD";
+
+  let normalizedQuantity = safeQuantity;
+  let unitPrice = Number(pricingMap[defaultTier] || 0);
+  let totalPrice = unitPrice * normalizedQuantity;
+
+  if (ticketBreakdown && typeof ticketBreakdown === "object" && Object.keys(ticketBreakdown).length) {
+    const normalizedTiers = Object.entries(ticketBreakdown)
+      .map(([rawTier, rawQty]) => ({
+        tier: String(rawTier || "").trim().toUpperCase(),
+        qty: Number(rawQty || 0),
+      }))
+      .filter((entry) => entry.tier && entry.qty > 0);
+
+    if (normalizedTiers.length) {
+      normalizedQuantity = normalizedTiers.reduce((sum, entry) => sum + entry.qty, 0);
+      totalPrice = normalizedTiers.reduce((sum, entry) => sum + (pricingMap[entry.tier] || unitPrice) * entry.qty, 0);
+      unitPrice = Math.round(totalPrice / Math.max(1, normalizedQuantity));
+    }
+  }
 
   return {
     quantity: normalizedQuantity,
-    unitPrice,
-    totalPrice: unitPrice * normalizedQuantity,
+    unitPrice: Number(unitPrice || 0),
+    totalPrice: Number(totalPrice || 0),
   };
 };
 
@@ -291,6 +389,92 @@ const calculateDiscount = (offer, totalPrice) => {
   if (offer.discount_type === "FLAT") return Math.min(Number(offer.discount_value || 0), Number(offer.max_discount_value || Infinity));
   const percentDiscount = Math.floor((totalPrice * Number(offer.discount_value || 0)) / 100);
   return Math.min(percentDiscount, Number(offer.max_discount_value || Infinity));
+};
+
+const normalizeOfferItem = (value = {}) => {
+  const applicability =
+    value.applicability && typeof value.applicability === "object" && !Array.isArray(value.applicability)
+      ? value.applicability
+      : {};
+  const fromTime = new Date(value.valid_from).getTime();
+  const untilTime = new Date(value.valid_until).getTime();
+  const now = Date.now();
+  const inferredCurrent =
+    value.is_active !== false &&
+    (!Number.isFinite(fromTime) || now >= fromTime) &&
+    (!Number.isFinite(untilTime) || now <= untilTime);
+
+  return {
+    id: value.id || "offer-missing",
+    code: String(value.code || "").trim().toUpperCase(),
+    title: String(value.title || "").trim(),
+    description: String(value.description || "").trim(),
+    discount_type: String(value.discount_type || "FLAT").trim().toUpperCase(),
+    discount_value: Number(value.discount_value || 0),
+    min_order_value: value.min_order_value === null || value.min_order_value === undefined ? null : Number(value.min_order_value),
+    max_discount_value:
+      value.max_discount_value === null || value.max_discount_value === undefined ? null : Number(value.max_discount_value),
+    valid_from: value.valid_from || null,
+    valid_until: value.valid_until || null,
+    usage_limit: value.usage_limit === null || value.usage_limit === undefined ? null : Number(value.usage_limit),
+    user_usage_limit:
+      value.user_usage_limit === null || value.user_usage_limit === undefined ? null : Number(value.user_usage_limit),
+    is_active: value.is_active !== false,
+    is_current: typeof value.is_current === "boolean" ? value.is_current : inferredCurrent,
+    applicability,
+  };
+};
+
+const offerMatchesScope = (offer, { cityId, listingType } = {}) => {
+  const applicability = offer?.applicability || {};
+  if (cityId) {
+    const cityIds = Array.isArray(applicability.city_ids) ? applicability.city_ids.map((item) => String(item)) : [];
+    if (cityIds.length && !cityIds.includes(String(cityId))) return false;
+  }
+  if (listingType) {
+    const allowedTypes = Array.isArray(applicability.types)
+      ? applicability.types.map((item) => String(item).trim().toUpperCase()).filter(Boolean)
+      : [];
+    if (allowedTypes.length && !allowedTypes.includes(String(listingType).trim().toUpperCase())) return false;
+  }
+  return true;
+};
+
+const normalizeSeatIdsForLock = (raw = []) =>
+  [...new Set((Array.isArray(raw) ? raw : []).map((item) => String(item || "").trim().toUpperCase()).filter(Boolean))].sort();
+
+const normalizeTicketBreakdownForLock = (raw) => {
+  const source =
+    raw && typeof raw === "object" && !Array.isArray(raw) && raw.tickets && typeof raw.tickets === "object"
+      ? raw.tickets
+      : raw;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+
+  return Object.entries(source).reduce((acc, [key, value]) => {
+    const normalizedKey = String(key || "").trim().toUpperCase();
+    const quantity = Number(value || 0);
+    if (!normalizedKey || !Number.isFinite(quantity) || quantity <= 0) return acc;
+    acc[normalizedKey] = Math.floor(quantity);
+    return acc;
+  }, {});
+};
+
+const lockRequestMatchesBooking = (booking, payload = {}) => {
+  const requestSeats = normalizeSeatIdsForLock(payload.seat_ids || []);
+  const bookingSeats = normalizeSeatIdsForLock(booking?.booked_seats || []);
+  if (requestSeats.join("|") !== bookingSeats.join("|")) return false;
+
+  const requestBreakdown = normalizeTicketBreakdownForLock(payload.ticket_breakdown);
+  if (Object.keys(requestBreakdown).length) {
+    const bookingBreakdown = normalizeTicketBreakdownForLock(booking?.ticket_breakdown);
+    if (JSON.stringify(requestBreakdown) !== JSON.stringify(bookingBreakdown)) return false;
+  }
+
+  if (payload.quantity !== undefined && payload.quantity !== null) {
+    if (Number(payload.quantity) !== Number(booking?.quantity || 0)) return false;
+  }
+
+  return true;
 };
 
 export const authService = {
@@ -342,8 +526,11 @@ export const authService = {
         };
       },
       async () => {
-        if (!payload?.name || !payload?.email || !payload?.password) {
-          throw createError("VALIDATION_ERROR", "Name, email and password are required");
+        if (!payload?.name || !payload?.email || !payload?.password || !payload?.confirm_password) {
+          throw createError("VALIDATION_ERROR", "Name, email, password and confirm_password are required");
+        }
+        if (payload.password !== payload.confirm_password) {
+          throw createError("VALIDATION_ERROR", "Confirm password does not match");
         }
         return {
           access_token: generateId("token"),
@@ -424,7 +611,13 @@ export const cityService = {
       },
       async () =>
         normalizePaginated(
-          { items: mockCities.filter((city) => city.is_active), page: 1, page_size: 50, total: mockCities.length, total_pages: 1 },
+          {
+            items: getCitiesState().filter((city) => city.is_active),
+            page: 1,
+            page_size: 50,
+            total: getCitiesState().length,
+            total_pages: 1,
+          },
           normalizeCity
         )
     ,
@@ -439,12 +632,33 @@ export const cityService = {
         return normalizePaginated(response.data, (item) => item);
       },
       async () => {
-        const items = mockVenues.filter((venue) => !params.city_id || venue.city_id === params.city_id);
+        const items = getVenuesState().filter((venue) => !params.city_id || venue.city_id === params.city_id);
         return normalizePaginated({ items, page: 1, page_size: 20, total: items.length, total_pages: 1 }, (item) => item);
       }
     ,
       { fallbackStatuses: [401, 403, 404, 500, 502, 503, 504] }
     );
+  },
+
+  async geocodeAddress(query) {
+    const trimmed = String(query || "").trim();
+    if (!trimmed) {
+      throw createError("VALIDATION_ERROR", "Address is required for geocoding");
+    }
+    try {
+      const response = await api.get("/geocode", { params: { q: trimmed } });
+      return response.data;
+    } catch (error) {
+      throw normalizeServiceError(error);
+    }
+  },
+
+  async createCity(payload) {
+    return adminLiveCall(() => api.post("/admin/cities", payload));
+  },
+
+  async createVenue(payload) {
+    return adminLiveCall(() => api.post("/admin/venues", payload));
   },
 };
 
@@ -496,6 +710,21 @@ export const listingService = {
         const typeList = params.types ? params.types.split(",") : [];
         const query = params.q ? params.q.toLowerCase() : "";
         const userWishlist = getState(STORE_KEYS.WISHLIST, initialMockWishlist);
+        const sort = params.sort || "popularity";
+        const userLat = toCoordinate(params.user_lat);
+        const userLon = toCoordinate(params.user_lon);
+        const hasUserCoords = userLat !== null && userLon !== null;
+        const radiusKm = isPresent(params.radius_km) ? Number(params.radius_km) : null;
+
+        if (sort === "distance" && !hasUserCoords) {
+          throw createError("VALIDATION_ERROR", "User latitude and longitude are required for distance sorting");
+        }
+        if (isPresent(params.radius_km) && !hasUserCoords) {
+          throw createError("VALIDATION_ERROR", "User latitude and longitude are required for radius filtering");
+        }
+        if (radiusKm !== null && (!Number.isFinite(radiusKm) || radiusKm <= 0)) {
+          throw createError("VALIDATION_ERROR", "Radius must be a positive number");
+        }
 
         const mapListings = (withCity = true) =>
           getListingsState()
@@ -517,15 +746,47 @@ export const listingService = {
         if (params.price_min) items = items.filter((item) => item.price_min >= Number(params.price_min));
         if (params.price_max) items = items.filter((item) => item.price_min <= Number(params.price_max));
 
-        const sort = params.sort || "popularity";
+        items = items.map((item) => {
+          if (!hasUserCoords) return { ...item, distance_km: null };
+          const venueLat = toCoordinate(item.venue?.latitude);
+          const venueLon = toCoordinate(item.venue?.longitude);
+          const distanceKm = haversineDistanceKm(userLat, userLon, venueLat, venueLon);
+          return { ...item, distance_km: Number.isFinite(distanceKm) ? Number(distanceKm.toFixed(3)) : null };
+        });
+
+        if (radiusKm !== null) {
+          items = items.filter((item) => item.distance_km !== null && item.distance_km <= radiusKm);
+        }
+
+        if (sort === "relevance" && query) {
+          items.sort((a, b) => {
+            const aText = `${a.title || ""} ${a.description || ""} ${a.category || ""}`.toLowerCase();
+            const bText = `${b.title || ""} ${b.description || ""} ${b.category || ""}`.toLowerCase();
+            const aIndex = aText.indexOf(query);
+            const bIndex = bText.indexOf(query);
+            const aScore = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
+            const bScore = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
+            if (aScore !== bScore) return aScore - bScore;
+            return Number(b.popularity_score || 0) - Number(a.popularity_score || 0);
+          });
+        }
+        if (sort === "popularity") items.sort((a, b) => Number(b.popularity_score || 0) - Number(a.popularity_score || 0));
         if (sort === "price_asc") items.sort((a, b) => a.price_min - b.price_min);
         if (sort === "price_desc") items.sort((a, b) => b.price_min - a.price_min);
-        if (sort === "newest") items.sort((a, b) => b.id.localeCompare(a.id));
+        if (sort === "newest") items.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
         if (sort === "date") {
           items.sort((a, b) => {
             const aTime = a.next_occurrence ? new Date(a.next_occurrence.start_time).getTime() : Number.MAX_SAFE_INTEGER;
             const bTime = b.next_occurrence ? new Date(b.next_occurrence.start_time).getTime() : Number.MAX_SAFE_INTEGER;
             return aTime - bTime;
+          });
+        }
+        if (sort === "distance") {
+          items.sort((a, b) => {
+            const aDistance = Number.isFinite(a.distance_km) ? a.distance_km : Number.MAX_SAFE_INTEGER;
+            const bDistance = Number.isFinite(b.distance_km) ? b.distance_km : Number.MAX_SAFE_INTEGER;
+            if (aDistance !== bDistance) return aDistance - bDistance;
+            return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
           });
         }
 
@@ -595,6 +856,64 @@ export const listingService = {
   },
 };
 
+export const offerService = {
+  async getOffers(params = {}) {
+    const sanitized = sanitizeQueryParams(params, { uuidKeys: ["city_id"] });
+    const page = Math.max(1, Number(sanitized.page || 1));
+    const requestedPageSize = Number(sanitized.page_size || 20);
+    const pageSize = Number.isFinite(requestedPageSize)
+      ? Math.min(100, Math.max(1, requestedPageSize))
+      : 20;
+    sanitized.page = page;
+    sanitized.page_size = pageSize;
+    const cityId = sanitized.city_id || "";
+    const listingType = String(sanitized.type || "").trim().toUpperCase();
+    const query = String(sanitized.q || "").trim().toLowerCase();
+    const code = String(sanitized.code || "").trim().toUpperCase();
+    const currentOnly =
+      typeof sanitized.current_only === "undefined"
+        ? true
+        : !(sanitized.current_only === false || String(sanitized.current_only).toLowerCase() === "false");
+
+    return withFallback(
+      async () => {
+        const response = await api.get("/offers", { params: sanitized });
+        return normalizePaginated(response.data, normalizeOfferItem);
+      },
+      async () => {
+        let items = getOffersState().map(normalizeOfferItem);
+
+        if (query) {
+          items = items.filter((offer) =>
+            `${offer.code} ${offer.title} ${offer.description || ""}`.toLowerCase().includes(query)
+          );
+        }
+        if (code) {
+          items = items.filter((offer) => offer.code.includes(code));
+        }
+        if (cityId || listingType) {
+          items = items.filter((offer) => offerMatchesScope(offer, { cityId, listingType }));
+        }
+        if (currentOnly) {
+          items = items.filter((offer) => offer.is_current);
+        }
+
+        items.sort((a, b) => {
+          const aExpiry = new Date(a.valid_until || "").getTime();
+          const bExpiry = new Date(b.valid_until || "").getTime();
+          if (Number.isFinite(aExpiry) && Number.isFinite(bExpiry) && aExpiry !== bExpiry) return aExpiry - bExpiry;
+          if (Number.isFinite(aExpiry)) return -1;
+          if (Number.isFinite(bExpiry)) return 1;
+          return a.code.localeCompare(b.code);
+        });
+
+        return normalizePaginated(paginate(items, page, pageSize), normalizeOfferItem);
+      },
+      { fallbackStatuses: [401, 403, 404, 500, 502, 503, 504] }
+    );
+  },
+};
+
 export const bookingService = {
   async createLock(payload) {
     return withFallback(
@@ -639,6 +958,19 @@ export const bookingService = {
         }
 
         const current = applyBookingExpiry(getState(STORE_KEYS.BOOKINGS, initialMockBookings));
+        const currentUserId = getCurrentUserId();
+        const existingHold = current.find(
+          (booking) =>
+            booking.user_id === currentUserId &&
+            booking.occurrence_id === occurrence.id &&
+            booking.status === BOOKING_STATUS.HOLD &&
+            lockRequestMatchesBooking(booking, payload)
+        );
+        if (existingHold) {
+          setState(STORE_KEYS.BOOKINGS, current);
+          return normalizeBooking(existingHold);
+        }
+
         const calculated = deriveQuantityAndPrice({
           occurrence,
           seatIds,
@@ -648,7 +980,7 @@ export const bookingService = {
 
         const booking = normalizeBooking({
           id: generateId("booking"),
-          user_id: getCurrentUserId(),
+          user_id: currentUserId,
           occurrence_id: occurrence.id,
           listing_snapshot: {
             listing_id: listing.id,
@@ -680,9 +1012,10 @@ export const bookingService = {
   },
 
   async applyOffer(bookingId, couponCode) {
+    const normalizedCode = typeof couponCode === "string" ? couponCode.trim().toUpperCase() : null;
     return withFallback(
       async () => {
-        const response = await api.patch(`/bookings/${bookingId}/offer`, { coupon_code: couponCode });
+        const response = await api.patch(`/bookings/${bookingId}/offer`, { coupon_code: normalizedCode });
         return normalizeBooking(response.data.booking);
       },
       async () => {
@@ -692,7 +1025,7 @@ export const bookingService = {
         if (booking.status !== BOOKING_STATUS.HOLD) throw createError("BOOKING_NOT_PENDING", "Booking is not in HOLD");
         if (isBookingExpired(booking)) throw createError("BOOKING_EXPIRED", "Booking hold expired");
 
-        if (!couponCode) {
+        if (!normalizedCode) {
           const updated = {
             ...booking,
             applied_offer: null,
@@ -707,7 +1040,7 @@ export const bookingService = {
         }
 
         const listing = findListing(booking.listing_snapshot.listing_id);
-        const offer = getOffersState().find((item) => item.code.toUpperCase() === String(couponCode).toUpperCase());
+        const offer = getOffersState().find((item) => item.code.toUpperCase() === normalizedCode);
         if (!offer) throw createError("OFFER_INVALID", "Coupon code is invalid");
         if (!isOfferApplicable({ offer, listing, totalPrice: booking.total_price, userId: booking.user_id })) {
           throw createError("OFFER_NOT_APPLICABLE", "Offer not applicable for this booking");
@@ -725,6 +1058,32 @@ export const bookingService = {
         const next = bookings.map((item) => (item.id === bookingId ? updated : item));
         setState(STORE_KEYS.BOOKINGS, next);
         return normalizeBooking(updated);
+      }
+    );
+  },
+
+  async createRazorpayOrder(bookingId) {
+    return withFallback(
+      async () => {
+        const response = await api.post(`/bookings/${bookingId}/payments/razorpay/order`, {});
+        return response.data?.payment || response.data;
+      },
+      async () => {
+        const bookings = applyBookingExpiry(getState(STORE_KEYS.BOOKINGS, initialMockBookings));
+        const booking = bookings.find((item) => item.id === bookingId);
+        if (!booking) throw createError("NOT_FOUND", "Booking not found");
+        const amountPaise = Math.round(Number(booking.final_price || booking.total_price || 0) * 100);
+        if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
+          throw createError("VALIDATION_ERROR", "Booking has invalid payable amount");
+        }
+        return {
+          key_id: "rzp_test_dummy_key",
+          order_id: `order_demo_${Math.random().toString(36).slice(2, 12)}`,
+          amount: amountPaise,
+          currency: booking.currency || "INR",
+          booking_id: bookingId,
+          mode: "dummy",
+        };
       }
     );
   },
@@ -816,11 +1175,11 @@ export const bookingService = {
 
         const filtered = bookings.filter((booking) => {
           const occurrence = findOccurrence(booking.occurrence_id);
-          const startTime = occurrence ? new Date(occurrence.start_time).getTime() : 0;
+          const referenceTime = occurrence ? new Date(occurrence.end_time || occurrence.start_time).getTime() : 0;
 
           if (scope === "cancelled") return [BOOKING_STATUS.CANCELLED, BOOKING_STATUS.EXPIRED].includes(booking.status);
-          if (scope === "past") return booking.status === BOOKING_STATUS.CONFIRMED && startTime < now;
-          return [BOOKING_STATUS.HOLD, BOOKING_STATUS.CONFIRMED].includes(booking.status) && startTime >= now;
+          if (scope === "past") return booking.status === BOOKING_STATUS.CONFIRMED && referenceTime < now;
+          return [BOOKING_STATUS.HOLD, BOOKING_STATUS.CONFIRMED].includes(booking.status) && referenceTime >= now;
         });
 
         const total = filtered.length;
@@ -898,8 +1257,13 @@ export const wishlistService = {
         const page = Number(params.page || 1);
         const pageSize = Number(params.page_size || 20);
         const wishlistIds = getState(STORE_KEYS.WISHLIST, initialMockWishlist);
+        const now = Date.now();
         const items = getListingsState()
           .filter((listing) => wishlistIds.includes(listing.id))
+          .filter((listing) => {
+            const occurrences = listOccurrencesByListing(listing.id).filter((occ) => occ.status === OCCURRENCE_STATUS.SCHEDULED);
+            return occurrences.some((occ) => new Date(occ.end_time || occ.start_time).getTime() >= now);
+          })
           .map((listing) => listingWithComputedFields(listing, wishlistIds));
         const total = items.length;
         return normalizePaginated(
@@ -1021,9 +1385,41 @@ export const notificationService = {
   },
 };
 
+export const mediaService = {
+  async uploadImage(file, options = {}) {
+    if (!(file instanceof File)) {
+      throw createError("VALIDATION_ERROR", "Please choose a valid image file");
+    }
+
+    const contentBase64 = await fileToDataUrl(file);
+    const folder = String(options.folder || "general").trim() || "general";
+    return withFallback(
+      async () => {
+        const response = await api.post("/media/upload-base64", {
+          filename: file.name || "upload.jpg",
+          content_base64: contentBase64,
+          folder,
+        });
+        return response.data;
+      },
+      async () => ({
+        url: contentBase64,
+        path: "",
+        mime_type: file.type || "image/*",
+        size: Number(file.size || 0),
+      }),
+      { fallbackStatuses: [401, 403, 404, 500, 502, 503, 504] }
+    );
+  },
+};
+
 export const userService = {
   async getMe() {
-    return withFallback(
+    const cachedUser = readUserMeCache();
+    if (cachedUser) return cachedUser;
+    if (userMeInFlight) return userMeInFlight;
+
+    userMeInFlight = withFallback(
       async () => {
         const response = await api.get("/users/me");
         return normalizeUser(response.data.user || response.data);
@@ -1032,19 +1428,31 @@ export const userService = {
         const current = getCurrentUser();
         return normalizeUser(current || mockUser);
       }
-    );
+    )
+      .then((nextUser) => {
+        writeUserMeCache(nextUser);
+        return nextUser;
+      })
+      .finally(() => {
+        userMeInFlight = null;
+      });
+
+    return userMeInFlight;
   },
 
   async updateMe(payload) {
     return withFallback(
       async () => {
         const response = await api.patch("/users/me", payload);
-        return normalizeUser(response.data.user || response.data);
+        const updated = normalizeUser(response.data.user || response.data);
+        writeUserMeCache(updated);
+        return updated;
       },
       async () => {
         const current = normalizeUser(getCurrentUser() || mockUser);
         const updated = normalizeUser({ ...current, ...payload });
         localStorage.setItem("citiconnect_user", JSON.stringify(updated));
+        writeUserMeCache(updated);
         return updated;
       }
     );
@@ -1063,602 +1471,65 @@ const paginate = (items, page = 1, pageSize = 20) => {
   };
 };
 
-const getCityName = (cityId) => mockCities.find((city) => city.id === cityId)?.name || "Unknown";
-const getVenueName = (venueId) => mockVenues.find((venue) => venue.id === venueId)?.name || "Unknown venue";
-
-const appendAuditLog = ({ action, entityType, entityId, diff }) => {
-  const logs = getAuditLogsState();
-  logs.unshift({
-    id: generateId("log"),
-    admin_user: getCurrentUser()?.name || mockAdminUser.name,
-    action,
-    entity_type: entityType,
-    entity_id: entityId,
-    diff: diff || {},
-    created_at: nowIso(),
-  });
-  setAuditLogsState(logs);
-};
-
 export const adminService = {
   async getDashboard() {
-    return withFallback(
-      async () => {
-        const response = await api.get("/admin/dashboard");
-        return response.data;
-      },
-      async () => {
-        const listings = getListingsState();
-        const bookings = applyBookingExpiry(getState(STORE_KEYS.BOOKINGS, initialMockBookings));
-        setState(STORE_KEYS.BOOKINGS, bookings);
-
-        const now = Date.now();
-        const dayStart = new Date();
-        dayStart.setHours(0, 0, 0, 0);
-        const weekStart = now - 7 * 24 * 60 * 60 * 1000;
-
-        const bookingsToday = bookings.filter((booking) => new Date(booking.created_at).getTime() >= dayStart.getTime()).length;
-        const bookingsThisWeek = bookings.filter((booking) => new Date(booking.created_at).getTime() >= weekStart).length;
-        const totalRevenue = bookings
-          .filter((booking) => booking.status === BOOKING_STATUS.CONFIRMED)
-          .reduce((sum, booking) => sum + Number(booking.final_price || 0), 0);
-
-        const listingBookingCount = bookings.reduce((acc, booking) => {
-          const listingId = booking.listing_snapshot?.listing_id;
-          if (!listingId) return acc;
-          acc[listingId] = (acc[listingId] || 0) + 1;
-          return acc;
-        }, {});
-
-        const recentBookings = [...bookings]
-          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-          .slice(0, 6)
-          .map((booking) => ({
-            id: booking.id,
-            user_name: booking.user_id === mockUser.id ? mockUser.name : "User",
-            listing_title: booking.listing_snapshot?.title || "Listing",
-            quantity: booking.quantity,
-            final_price: booking.final_price,
-            status: booking.status,
-            created_at: booking.created_at,
-          }));
-
-        const topListings = listings
-          .map((listing) => ({
-            id: listing.id,
-            title: listing.title,
-            total_bookings: listingBookingCount[listing.id] || 0,
-          }))
-          .sort((a, b) => b.total_bookings - a.total_bookings)
-          .slice(0, 6);
-
-        return {
-          stats: {
-            total_listings: listings.length,
-            active_listings: listings.filter((listing) => listing.status === LISTING_STATUS.PUBLISHED).length,
-            total_bookings: bookings.length,
-            bookings_today: bookingsToday,
-            bookings_this_week: bookingsThisWeek,
-            active_users: Math.max(1, new Set(bookings.map((booking) => booking.user_id)).size),
-            total_revenue: totalRevenue,
-          },
-          recent_bookings: recentBookings,
-          top_listings: topListings,
-        };
-      }
-    );
+    return adminLiveCall(() => api.get("/admin/dashboard"));
   },
 
   async getListings(params = {}) {
-    return withFallback(
-      async () => {
-        const response = await api.get("/admin/listings", { params });
-        return normalizePaginated(response.data, (item) => item);
-      },
-      async () => {
-        const page = Number(params.page || 1);
-        const pageSize = Number(params.page_size || 20);
-        const bookings = applyBookingExpiry(getState(STORE_KEYS.BOOKINGS, initialMockBookings));
-
-        const listingBookingCount = bookings.reduce((acc, booking) => {
-          const listingId = booking.listing_snapshot?.listing_id;
-          if (!listingId) return acc;
-          acc[listingId] = (acc[listingId] || 0) + 1;
-          return acc;
-        }, {});
-
-        let items = getListingsState().map((listing) => ({
-          id: listing.id,
-          type: listing.type,
-          title: listing.title,
-          city: getCityName(listing.city_id),
-          city_id: listing.city_id,
-          status: listing.status,
-          total_bookings: listingBookingCount[listing.id] || 0,
-          created_at: listing.created_at || nowIso(),
-          offer_text: listing.offer_text || "",
-          is_featured: Boolean(listing.is_featured),
-        }));
-
-        if (params.type) items = items.filter((item) => item.type === params.type);
-        if (params.status) items = items.filter((item) => item.status === params.status);
-        if (params.city) {
-          const cityQuery = String(params.city).toLowerCase();
-          items = items.filter(
-            (item) => item.city.toLowerCase().includes(cityQuery) || String(item.city_id || "").toLowerCase() === cityQuery
-          );
-        }
-
-        items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        return paginate(items, page, pageSize);
-      }
-    );
+    return adminPaginatedCall(() => api.get("/admin/listings", { params }));
   },
 
   async getListingById(listingId) {
-    return withFallback(
-      async () => {
-        const response = await api.get(`/admin/listings/${listingId}`);
-        return response.data.listing || response.data;
-      },
-      async () => {
-        const listing = getListingsState().find((item) => item.id === listingId);
-        if (!listing) throw createError("NOT_FOUND", "Listing not found");
-        return listing;
-      }
-    );
+    return adminLiveCall(() => api.get(`/admin/listings/${listingId}`), (data) => data.listing || data);
   },
 
   async createListing(payload) {
-    return withFallback(
-      async () => {
-        const response = await api.post("/admin/listings", payload);
-        return response.data;
-      },
-      async () => {
-        if (!payload?.type || !payload?.title || !payload?.city_id || !payload?.venue_id) {
-          throw createError("VALIDATION_ERROR", "Type, title, city and venue are required");
-        }
-
-        const listings = getListingsState();
-        const venue = mockVenues.find((item) => item.id === payload.venue_id);
-
-        const next = {
-          id: generateId("listing"),
-          type: payload.type,
-          title: payload.title,
-          description: payload.description || "",
-          city_id: payload.city_id,
-          city: getCityName(payload.city_id),
-          address: venue?.address || "",
-          venue_id: payload.venue_id,
-          timezone: payload.timezone || "Asia/Kolkata",
-          cover_image_url: payload.cover_image_url || "",
-          gallery_image_urls: payload.gallery_image_urls || [],
-          price_min: Number(payload.price_min || 0),
-          price_max: Number(payload.price_max || payload.price_min || 0),
-          currency: payload.currency || "INR",
-          category: payload.category || "",
-          offer_text: payload.offer_text || "",
-          smart_date_label: "New listing",
-          is_wishlisted: false,
-          is_featured: Boolean(payload.is_featured),
-          metadata: payload.metadata || {},
-          status: payload.status || LISTING_STATUS.DRAFT,
-          created_at: nowIso(),
-          created_by: getCurrentUser()?.id || mockAdminUser.id,
-        };
-
-        listings.unshift(next);
-        setListingsState(listings);
-
-        appendAuditLog({
-          action: "CREATE_LISTING",
-          entityType: "LISTING",
-          entityId: next.id,
-          diff: { title: next.title, status: next.status },
-        });
-
-        return {
-          message: "Listing created successfully",
-          listing: { id: next.id, status: next.status },
-        };
-      }
-    );
+    return adminLiveCall(() => api.post("/admin/listings", payload));
   },
 
   async updateListing(listingId, payload) {
-    return withFallback(
-      async () => {
-        const response = await api.patch(`/admin/listings/${listingId}`, payload);
-        return response.data;
-      },
-      async () => {
-        const listings = getListingsState();
-        const index = listings.findIndex((listing) => listing.id === listingId);
-        if (index === -1) throw createError("NOT_FOUND", "Listing not found");
-
-        const updated = {
-          ...listings[index],
-          ...payload,
-          price_min: payload.price_min !== undefined ? Number(payload.price_min) : listings[index].price_min,
-          price_max: payload.price_max !== undefined ? Number(payload.price_max) : listings[index].price_max,
-        };
-        listings[index] = updated;
-        setListingsState(listings);
-
-        appendAuditLog({
-          action: "UPDATE_LISTING",
-          entityType: "LISTING",
-          entityId: listingId,
-          diff: payload,
-        });
-
-        return {
-          message: "Listing updated successfully",
-          listing: {
-            id: updated.id,
-            title: updated.title,
-            offer_text: updated.offer_text || "",
-            is_featured: Boolean(updated.is_featured),
-            status: updated.status,
-          },
-        };
-      }
-    );
+    return adminLiveCall(() => api.patch(`/admin/listings/${listingId}`, payload));
   },
 
   async archiveListing(listingId) {
-    return withFallback(
-      async () => {
-        const response = await api.delete(`/admin/listings/${listingId}`);
-        return response.data;
-      },
-      async () => {
-        const listings = getListingsState();
-        const listing = listings.find((item) => item.id === listingId);
-        if (!listing) throw createError("NOT_FOUND", "Listing not found");
-
-        listing.status = LISTING_STATUS.ARCHIVED;
-        setListingsState(listings);
-
-        const now = Date.now();
-        const occurrences = getOccurrencesState();
-        const nextOccurrences = occurrences.map((occurrence) => {
-          if (
-            occurrence.listing_id === listingId &&
-            occurrence.status === OCCURRENCE_STATUS.SCHEDULED &&
-            new Date(occurrence.start_time).getTime() >= now
-          ) {
-            return { ...occurrence, status: OCCURRENCE_STATUS.CANCELLED };
-          }
-          return occurrence;
-        });
-        setOccurrencesState(nextOccurrences);
-
-        appendAuditLog({
-          action: "ARCHIVE_LISTING",
-          entityType: "LISTING",
-          entityId: listingId,
-          diff: { status: LISTING_STATUS.ARCHIVED },
-        });
-
-        return { message: "Listing archived successfully" };
-      }
-    );
+    return adminLiveCall(() => api.delete(`/admin/listings/${listingId}`));
   },
 
   async getOccurrences(listingId, params = {}) {
-    return withFallback(
-      async () => {
-        const response = await api.get(`/admin/listings/${listingId}/occurrences`, { params });
-        return normalizePaginated(response.data, (item) => item);
-      },
-      async () => {
-        const page = Number(params.page || 1);
-        const pageSize = Number(params.page_size || 20);
-
-        let items = getOccurrencesState()
-          .filter((occurrence) => occurrence.listing_id === listingId)
-          .map((occurrence) => ({
-            ...occurrence,
-            venue_name: getVenueName(occurrence.venue_id),
-          }));
-
-        if (params.status) items = items.filter((occurrence) => occurrence.status === params.status);
-        items.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-        return paginate(items, page, pageSize);
-      }
-    );
+    return adminPaginatedCall(() => api.get(`/admin/listings/${listingId}/occurrences`, { params }));
   },
 
   async createOccurrences(listingId, payload) {
-    return withFallback(
-      async () => {
-        const response = await api.post(`/admin/listings/${listingId}/occurrences`, payload);
-        return response.data;
-      },
-      async () => {
-        const listing = getListingsState().find((item) => item.id === listingId);
-        if (!listing) throw createError("NOT_FOUND", "Listing not found");
+    return adminLiveCall(() => api.post(`/admin/listings/${listingId}/occurrences`, payload));
+  },
 
-        const entries = payload?.occurrences || [];
-        if (!entries.length) throw createError("VALIDATION_ERROR", "At least one occurrence is required");
-
-        const occurrences = getOccurrencesState();
-        const created = entries.map((entry) => ({
-          id: generateId("occ"),
-          listing_id: listingId,
-          city_id: listing.city_id,
-          venue_id: entry.venue_id,
-          start_time: entry.start_time,
-          end_time: entry.end_time,
-          provider_sub_location: entry.provider_sub_location || "",
-          capacity_total: Number(entry.capacity_total || 0),
-          capacity_remaining: Number(entry.capacity_total || 0),
-          ticket_pricing:
-            entry.ticket_pricing ||
-            (entry.price ? { STANDARD: Number(entry.price) } : {}),
-          seat_layout: entry.seat_layout || null,
-          status: OCCURRENCE_STATUS.SCHEDULED,
-        }));
-
-        setOccurrencesState([...created, ...occurrences]);
-
-        appendAuditLog({
-          action: "CREATE_OCCURRENCE",
-          entityType: "OCCURRENCE",
-          entityId: created[0].id,
-          diff: { listing_id: listingId, count: created.length },
-        });
-
-        return {
-          message: `${created.length} occurrence created successfully`,
-          occurrences: created.map((occurrence) => ({ id: occurrence.id, status: occurrence.status })),
-        };
-      }
-    );
+  async updateOccurrence(occurrenceId, payload) {
+    return adminLiveCall(() => api.patch(`/admin/occurrences/${occurrenceId}`, payload));
   },
 
   async cancelOccurrence(occurrenceId, reason) {
-    return withFallback(
-      async () => {
-        const response = await api.patch(`/admin/occurrences/${occurrenceId}/cancel`, { reason });
-        return response.data;
-      },
-      async () => {
-        const occurrences = getOccurrencesState();
-        const index = occurrences.findIndex((occurrence) => occurrence.id === occurrenceId);
-        if (index === -1) throw createError("NOT_FOUND", "Occurrence not found");
-
-        occurrences[index] = {
-          ...occurrences[index],
-          status: OCCURRENCE_STATUS.CANCELLED,
-        };
-        setOccurrencesState(occurrences);
-
-        const bookings = applyBookingExpiry(getState(STORE_KEYS.BOOKINGS, initialMockBookings));
-        const nextBookings = bookings.map((booking) => {
-          if (booking.occurrence_id !== occurrenceId) return booking;
-          if (![BOOKING_STATUS.HOLD, BOOKING_STATUS.CONFIRMED].includes(booking.status)) return booking;
-          return {
-            ...booking,
-            status: BOOKING_STATUS.CANCELLED,
-            can_cancel: false,
-            can_confirm: false,
-            cancellation_reason: reason || "Occurrence cancelled by admin",
-            updated_at: nowIso(),
-          };
-        });
-        setState(STORE_KEYS.BOOKINGS, nextBookings);
-
-        appendAuditLog({
-          action: "CANCEL_OCCURRENCE",
-          entityType: "OCCURRENCE",
-          entityId: occurrenceId,
-          diff: { reason: reason || "N/A" },
-        });
-
-        return {
-          message: "Occurrence cancelled. Related bookings cancelled.",
-          occurrence_id: occurrenceId,
-        };
-      }
-    );
+    return adminLiveCall(() => api.patch(`/admin/occurrences/${occurrenceId}/cancel`, { reason }));
   },
 
   async getBookings(params = {}) {
-    return withFallback(
-      async () => {
-        const response = await api.get("/admin/bookings", { params });
-        return normalizePaginated(response.data, (item) => item);
-      },
-      async () => {
-        const page = Number(params.page || 1);
-        const pageSize = Number(params.page_size || 20);
-
-        const bookings = applyBookingExpiry(getState(STORE_KEYS.BOOKINGS, initialMockBookings));
-        setState(STORE_KEYS.BOOKINGS, bookings);
-
-        let items = bookings.map((booking) => {
-          const occurrence = findOccurrence(booking.occurrence_id);
-          const listing = findListing(booking.listing_snapshot?.listing_id || "");
-          return {
-            id: booking.id,
-            user: {
-              id: booking.user_id,
-              name: booking.user_id === mockUser.id ? mockUser.name : "User",
-              email: booking.user_id === mockUser.id ? mockUser.email : "user@example.com",
-            },
-            listing_title: booking.listing_snapshot?.title || listing?.title || "Listing",
-            listing_type: booking.listing_snapshot?.type || listing?.type || "EVENT",
-            occurrence_start: occurrence?.start_time || booking.created_at,
-            quantity: booking.quantity,
-            final_price: booking.final_price,
-            status: booking.status,
-            created_at: booking.created_at,
-          };
-        });
-
-        if (params.status) items = items.filter((booking) => booking.status === params.status);
-        if (params.date_from) items = items.filter((booking) => new Date(booking.created_at).getTime() >= new Date(params.date_from).getTime());
-        if (params.date_to) items = items.filter((booking) => new Date(booking.created_at).getTime() <= new Date(params.date_to).getTime());
-        if (params.listing) {
-          const listingQuery = String(params.listing).toLowerCase();
-          items = items.filter((booking) => booking.listing_title.toLowerCase().includes(listingQuery));
-        }
-        if (params.user) {
-          const userQuery = String(params.user).toLowerCase();
-          items = items.filter(
-            (booking) => booking.user.name.toLowerCase().includes(userQuery) || booking.user.email.toLowerCase().includes(userQuery)
-          );
-        }
-
-        items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        return paginate(items, page, pageSize);
-      }
-    );
+    return adminPaginatedCall(() => api.get("/admin/bookings", { params }));
   },
 
   async getOffers(params = {}) {
-    return withFallback(
-      async () => {
-        const response = await api.get("/admin/offers", { params });
-        return normalizePaginated(response.data, (item) => item);
-      },
-      async () => {
-        const page = Number(params.page || 1);
-        const pageSize = Number(params.page_size || 20);
-        let items = getOffersState();
-
-        if (params.is_active === true || params.is_active === "true") {
-          items = items.filter((offer) => offer.is_active);
-        }
-        if (params.code) {
-          const query = String(params.code).toLowerCase();
-          items = items.filter((offer) => offer.code.toLowerCase().includes(query));
-        }
-
-        items = [...items].sort((a, b) => new Date(b.valid_until).getTime() - new Date(a.valid_until).getTime());
-        return paginate(items, page, pageSize);
-      }
-    );
+    return adminPaginatedCall(() => api.get("/admin/offers", { params }));
   },
 
   async createOffer(payload) {
-    return withFallback(
-      async () => {
-        const response = await api.post("/admin/offers", payload);
-        return response.data;
-      },
-      async () => {
-        if (!payload?.code || !payload?.title || !payload?.discount_type) {
-          throw createError("VALIDATION_ERROR", "Code, title and discount type are required");
-        }
-
-        const offers = getOffersState();
-        const normalizedCode = String(payload.code).toUpperCase().trim();
-        if (offers.some((offer) => offer.code.toUpperCase() === normalizedCode)) {
-          throw createError("DUPLICATE_CODE", "Offer code already exists");
-        }
-
-        const offer = {
-          id: generateId("offer"),
-          code: normalizedCode,
-          title: payload.title,
-          discount_type: payload.discount_type,
-          discount_value: Number(payload.discount_value || 0),
-          min_order_value: Number(payload.min_order_value || 0),
-          max_discount_value: Number(payload.max_discount_value || 0),
-          valid_from: payload.valid_from || nowIso(),
-          valid_until: payload.valid_until || nowIso(),
-          usage_limit: Number(payload.usage_limit || 0),
-          user_usage_limit: Number(payload.user_usage_limit || 0),
-          is_active: payload.is_active !== false,
-          applicability: payload.applicability || {
-            city_ids: [],
-            types: [],
-            categories: [],
-            listing_ids: [],
-          },
-        };
-        offers.unshift(offer);
-        setOffersState(offers);
-
-        appendAuditLog({
-          action: "CREATE_OFFER",
-          entityType: "OFFER",
-          entityId: offer.id,
-          diff: { code: offer.code, is_active: offer.is_active },
-        });
-
-        return {
-          message: "Offer created successfully",
-          offer: { id: offer.id, code: offer.code, is_active: offer.is_active },
-        };
-      }
-    );
+    return adminLiveCall(() => api.post("/admin/offers", payload));
   },
 
   async updateOffer(offerId, payload) {
-    return withFallback(
-      async () => {
-        const response = await api.patch(`/admin/offers/${offerId}`, payload);
-        return response.data;
-      },
-      async () => {
-        const offers = getOffersState();
-        const index = offers.findIndex((offer) => offer.id === offerId);
-        if (index === -1) throw createError("NOT_FOUND", "Offer not found");
-
-        offers[index] = {
-          ...offers[index],
-          ...payload,
-          discount_value:
-            payload.discount_value !== undefined ? Number(payload.discount_value) : offers[index].discount_value,
-          min_order_value:
-            payload.min_order_value !== undefined ? Number(payload.min_order_value) : offers[index].min_order_value,
-          max_discount_value:
-            payload.max_discount_value !== undefined ? Number(payload.max_discount_value) : offers[index].max_discount_value,
-        };
-        setOffersState(offers);
-
-        appendAuditLog({
-          action: "UPDATE_OFFER",
-          entityType: "OFFER",
-          entityId: offerId,
-          diff: payload,
-        });
-
-        return {
-          message: "Offer updated successfully",
-          offer: {
-            id: offers[index].id,
-            code: offers[index].code,
-            is_active: offers[index].is_active,
-          },
-        };
-      }
-    );
+    return adminLiveCall(() => api.patch(`/admin/offers/${offerId}`, payload));
   },
 
   async getAuditLogs(params = {}) {
-    return withFallback(
-      async () => {
-        const response = await api.get("/admin/audit-logs", { params });
-        return normalizePaginated(response.data, (item) => item);
-      },
-      async () => {
-        const page = Number(params.page || 1);
-        const pageSize = Number(params.page_size || 20);
-        let items = getAuditLogsState();
-
-        if (params.action) items = items.filter((log) => log.action === params.action);
-        if (params.entity_type) items = items.filter((log) => log.entity_type === params.entity_type);
-        items = [...items].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        return paginate(items, page, pageSize);
-      }
-    );
+    return adminPaginatedCall(() => api.get("/admin/audit-logs", { params }));
   },
 };
 

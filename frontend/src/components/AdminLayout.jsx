@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
-import { BookText, ClipboardList, LayoutDashboard, LogOut, Percent, Presentation } from "lucide-react";
+import { BookText, ClipboardList, LayoutDashboard, LogOut, MapPinned, Percent, Presentation } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -10,6 +10,7 @@ import ForbiddenPage from "@/pages/ForbiddenPage";
 const navItems = [
   { name: "Dashboard", path: "/admin/dashboard", icon: LayoutDashboard },
   { name: "Listings", path: "/admin/listings", icon: Presentation },
+  { name: "Cities & Venues", path: "/admin/locations", icon: MapPinned },
   { name: "Bookings", path: "/admin/bookings", icon: ClipboardList },
   { name: "Offers", path: "/admin/offers", icon: Percent },
   { name: "Audit Logs", path: "/admin/audit-logs", icon: BookText },

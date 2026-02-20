@@ -1,45 +1,15 @@
 from functools import lru_cache
-from os import getenv
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-try:
-    from pydantic_settings import BaseSettings, SettingsConfigDict
-except ModuleNotFoundError:
-    class SettingsConfigDict(dict):
-        pass
-
-    class BaseSettings(BaseModel):
-        model_config = SettingsConfigDict(extra="ignore")
-
-        def __init__(self, **data):
-            env_values: dict[str, str] = {}
-            env_file = Path(__file__).resolve().parents[2] / ".env"
-            if env_file.exists():
-                for raw_line in env_file.read_text(encoding="utf-8").splitlines():
-                    line = raw_line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    env_values[key.strip()] = value.strip().strip('"').strip("'")
-
-            for field_name in self.__class__.model_fields:
-                env_key = field_name.upper()
-                if field_name in data:
-                    continue
-                env_val = getenv(env_key)
-                if env_val is not None:
-                    data[field_name] = env_val
-                elif env_key in env_values:
-                    data[field_name] = env_values[env_key]
-
-            super().__init__(**data)
+ENV_FILE_PATH = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_FILE_PATH),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -51,6 +21,7 @@ class Settings(BaseSettings):
     refresh_token_expire_seconds: int = Field(default=7 * 24 * 3600)
     app_name: str = Field(default="CitiConnect Backend")
     cors_origins: str = Field(default="http://localhost:5173,http://127.0.0.1:5173")
+    enable_scheduler: bool = Field(default=True)
 
     geocoding_provider: str = Field(default="nominatim")
     geocoding_base_url: str = Field(default="https://nominatim.openstreetmap.org/search")
@@ -77,7 +48,7 @@ class Settings(BaseSettings):
     razorpay_key_secret: str | None = Field(default="dummy_secret")
     razorpay_webhook_secret: str | None = Field(default="dummy_webhook_secret")
     razorpay_base_url: str = Field(default="https://api.razorpay.com/v1")
-    razorpay_mode: str = Field(default="dummy")
+    razorpay_mode: str = Field(default="auto")
 
     @property
     def normalized_database_url(self) -> str:

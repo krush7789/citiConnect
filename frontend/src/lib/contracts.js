@@ -26,6 +26,17 @@ const toMetadata = (value = {}) => {
   return {};
 };
 
+const toStringArray = (value) =>
+  Array.isArray(value)
+    ? value.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean)
+    : [];
+
+const toOptionalNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 export const normalizeUser = (value = {}) => ({
   id: value.id || "guest-user",
   name: value.name || "Guest User",
@@ -50,41 +61,51 @@ export const normalizeCity = (value = {}) => ({
   is_active: value.is_active !== false,
 });
 
-export const normalizeListingCard = (value = {}) => ({
-  id: value.id || "listing-missing",
-  type: value.type || LISTING_TYPE.EVENT,
-  title: value.title || "Untitled Listing",
-  description: value.description || "",
-  city: toCityName(value.city) || value.city_name || "Gurugram",
-  city_id: value.city_id || toCityId(value.city) || "",
-  address: toAddress(value),
-  timezone: value.timezone || toMetadata(value).timezone || "Asia/Kolkata",
-  cover_image_url: value.cover_image_url || "",
-  price_min: Number(value.price_min || 0),
-  price_max: Number(value.price_max || value.price_min || 0),
-  currency: value.currency || "INR",
-  category: value.category || "",
-  offer_text: value.offer_text || "",
-  smart_date_label: value.smart_date_label || "",
-  is_wishlisted: Boolean(value.is_wishlisted),
-  status: value.status || LISTING_STATUS.PUBLISHED,
-  metadata: toMetadata(value),
-  venue: isObject(value.venue) ? value.venue : null,
-  vibe_tags: Array.isArray(value.vibe_tags) ? value.vibe_tags : [],
-  next_occurrence: value.next_occurrence
-    ? {
-        id: value.next_occurrence.id,
-        start_time: value.next_occurrence.start_time || fallbackDate(),
-        capacity_remaining: Number(value.next_occurrence.capacity_remaining || 0),
-        status: value.next_occurrence.status || OCCURRENCE_STATUS.SCHEDULED,
-      }
-    : null,
-});
+export const normalizeListingCard = (value = {}) => {
+  const galleryImageUrlsRaw = toStringArray(value.gallery_image_urls);
+  const coverImageUrl =
+    (typeof value.cover_image_url === "string" ? value.cover_image_url.trim() : "") || galleryImageUrlsRaw[0] || "";
+  const galleryImageUrls = galleryImageUrlsRaw.length ? galleryImageUrlsRaw : coverImageUrl ? [coverImageUrl] : [];
+
+  return {
+    id: value.id || "listing-missing",
+    type: value.type || LISTING_TYPE.EVENT,
+    title: value.title || "Untitled Listing",
+    description: value.description || "",
+    city: toCityName(value.city) || value.city_name || "Gurugram",
+    city_id: value.city_id || toCityId(value.city) || "",
+    address: toAddress(value),
+    timezone: value.timezone || toMetadata(value).timezone || "Asia/Kolkata",
+    cover_image_url: coverImageUrl,
+    gallery_image_urls: galleryImageUrls,
+    price_min: Number(value.price_min || 0),
+    price_max: Number(value.price_max || value.price_min || 0),
+    currency: value.currency || "INR",
+    category: value.category || "",
+    offer_text: value.offer_text || "",
+    smart_date_label: value.smart_date_label || "",
+    is_wishlisted: Boolean(value.is_wishlisted),
+    status: value.status || LISTING_STATUS.PUBLISHED,
+    metadata: toMetadata(value),
+    venue: isObject(value.venue) ? value.venue : null,
+    distance_km: toOptionalNumber(value.distance_km),
+    vibe_tags: Array.isArray(value.vibe_tags) ? value.vibe_tags : [],
+    next_occurrence: value.next_occurrence
+      ? {
+          id: value.next_occurrence.id,
+          start_time: value.next_occurrence.start_time || fallbackDate(),
+          capacity_remaining: Number(value.next_occurrence.capacity_remaining || 0),
+          status: value.next_occurrence.status || OCCURRENCE_STATUS.SCHEDULED,
+        }
+      : null,
+  };
+};
 
 export const normalizeOccurrence = (value = {}) => ({
   id: value.id || "occurrence-missing",
   listing_id: value.listing_id || "",
   venue_id: value.venue_id || "",
+  venue_name: value.venue_name || "",
   city_id: value.city_id || "",
   start_time: value.start_time || fallbackDate(),
   end_time: value.end_time || fallbackDate(),

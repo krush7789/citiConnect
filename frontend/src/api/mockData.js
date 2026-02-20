@@ -660,7 +660,37 @@ export const mockOccurrences = [
     capacity_total: 160,
     capacity_remaining: 130,
     ticket_pricing: { SILVER: 180, GOLD: 280, RECLINER: 380 },
-    seat_layout: null,
+    seat_layout: (() => {
+      const rows = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+      const columns = 16;
+      const seat_category_map = {};
+
+      rows.forEach((row) => {
+        for (let col = 1; col <= columns; col += 1) {
+          const seatId = `${row}${col}`;
+          if (row === "A" || row === "B") {
+            seat_category_map[seatId] = "RECLINER";
+          } else if (row === "C" || row === "D" || row === "E" || row === "F") {
+            seat_category_map[seatId] = "GOLD";
+          } else {
+            seat_category_map[seatId] = "SILVER";
+          }
+        }
+      });
+
+      return {
+        version: 2,
+        rows,
+        columns,
+        aisles_after: [4, 8, 12],
+        seat_category_map,
+        categories: [
+          { key: "RECLINER", label: "Recliner", color: "#f59e0b", price: 380, rows: ["A", "B"] },
+          { key: "GOLD", label: "Gold", color: "#3b82f6", price: 280, rows: ["C", "D", "E", "F"] },
+          { key: "SILVER", label: "Silver", color: "#22c55e", price: 180, rows: ["G", "H", "I", "J"] },
+        ],
+      };
+    })(),
     status: OCCURRENCE_STATUS.SCHEDULED,
   },
   {

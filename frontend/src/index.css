@@ -45,6 +45,10 @@
     min-height: 100vh;
   }
 
+  input[type="checkbox"] {
+    accent-color: hsl(var(--primary));
+  }
+
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
