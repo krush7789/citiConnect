@@ -92,11 +92,11 @@ export const normalizeListingCard = (value = {}) => {
     vibe_tags: Array.isArray(value.vibe_tags) ? value.vibe_tags : [],
     next_occurrence: value.next_occurrence
       ? {
-          id: value.next_occurrence.id,
-          start_time: value.next_occurrence.start_time || fallbackDate(),
-          capacity_remaining: Number(value.next_occurrence.capacity_remaining || 0),
-          status: value.next_occurrence.status || OCCURRENCE_STATUS.SCHEDULED,
-        }
+        id: value.next_occurrence.id,
+        start_time: value.next_occurrence.start_time || fallbackDate(),
+        capacity_remaining: Number(value.next_occurrence.capacity_remaining || 0),
+        status: value.next_occurrence.status || OCCURRENCE_STATUS.SCHEDULED,
+      }
       : null,
   };
 };
@@ -153,6 +153,38 @@ export const normalizeNotification = (value = {}) => ({
   is_read: Boolean(value.is_read),
   created_at: value.created_at || fallbackDate(),
 });
+
+export const normalizeOfferItem = (value = {}) => {
+  const applicability =
+    value.applicability && typeof value.applicability === "object" && !Array.isArray(value.applicability)
+      ? value.applicability
+      : {};
+  const fromTime = new Date(value.valid_from).getTime();
+  const untilTime = new Date(value.valid_until).getTime();
+  const now = Date.now();
+  const inferredCurrent =
+    value.is_active !== false &&
+    (!Number.isFinite(fromTime) || now >= fromTime) &&
+    (!Number.isFinite(untilTime) || now <= untilTime);
+
+  return {
+    id: value.id || "offer-missing",
+    code: String(value.code || "").trim().toUpperCase(),
+    title: String(value.title || "").trim(),
+    description: String(value.description || "").trim(),
+    discount_type: String(value.discount_type || "FLAT").trim().toUpperCase(),
+    discount_value: Number(value.discount_value || 0),
+    min_order_value: value.min_order_value === null || value.min_order_value === undefined ? null : Number(value.min_order_value),
+    max_discount_value: value.max_discount_value === null || value.max_discount_value === undefined ? null : Number(value.max_discount_value),
+    valid_from: value.valid_from || null,
+    valid_until: value.valid_until || null,
+    usage_limit: value.usage_limit === null || value.usage_limit === undefined ? null : Number(value.usage_limit),
+    user_usage_limit: value.user_usage_limit === null || value.user_usage_limit === undefined ? null : Number(value.user_usage_limit),
+    is_active: value.is_active !== false,
+    is_current: typeof value.is_current === "boolean" ? value.is_current : inferredCurrent,
+    applicability,
+  };
+};
 
 export const normalizePaginated = (payload = {}, normalizer = (item) => item) => {
   const items = payload.items || payload.bookings || payload.offers || payload.logs || [];

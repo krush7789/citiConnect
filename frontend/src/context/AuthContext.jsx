@@ -1,10 +1,10 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import LoginModal from "@/components/LoginModal";
-import RegisterModal from "@/components/RegisterModal";
-import ForgotPasswordModal from "@/components/ForgotPasswordModal";
-import ChangePasswordModal from "@/components/ChangePasswordModal";
-import ForceChangePasswordModal from "@/components/ForceChangePasswordModal";
+import LoginModal from "@/components/auth/LoginModal";
+import RegisterModal from "@/components/auth/RegisterModal";
+import ForgotPasswordModal from "@/components/auth/ForgotPasswordModal";
+import ChangePasswordModal from "@/components/auth/ChangePasswordModal";
+import ForceChangePasswordModal from "@/components/auth/ForceChangePasswordModal";
 import { authService } from "@/api/services";
 import { clearStoredAuth, setStoredToken, setUnauthorizedHandler, USER_STORAGE_KEY } from "@/api/client";
 import { normalizeUser } from "@/lib/contracts";

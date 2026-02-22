@@ -228,6 +228,8 @@ async def list_listings(
         stmt = stmt.order_by(Listing.popularity_score.desc(), Listing.created_at.desc())
     elif sort == "distance" and distance_expr is not None:
         stmt = stmt.order_by(distance_expr.asc().nulls_last(), Listing.created_at.desc())
+    elif sort == "relevance":
+        stmt = stmt.order_by(Listing.popularity_score.desc(), Listing.created_at.desc())
     else:
         stmt = stmt.order_by(Listing.created_at.desc())
 

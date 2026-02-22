@@ -1,5 +1,5 @@
-import re
-from datetime import UTC, date, datetime, time
+import asyncio
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependency import get_optional_current_user
 from app.core.errors import raise_api_error
-from app.models.enums import ListingType, OccurrenceStatus
+from app.models.enums import ListingType
 from app.models.venue import Venue
 from app.repository.booking import expire_stale_seat_locks
 from app.repository.listing import (
@@ -30,15 +30,17 @@ from app.schema.listing import (
     ListingFiltersResponse,
     ListingItem,
     ListingOccurrencesResponse,
-    OccurrenceItem,
     SeatMapResponse,
 )
+from app.utils.datetime_utils import to_end_of_day, to_start_of_day
 from app.utils.pagination import build_paginated_response
+from app.utils.pricing import normalize_ticket_pricing
+from app.utils.seat_layout import normalize_seat_layout, sort_seat_id_key
 
 router = APIRouter(tags=["listings"])
 
 
-SORT_OPTIONS = {"newest", "price_asc", "price_desc", "date", "popularity", "distance"}
+SORT_OPTIONS = {"newest", "price_asc", "price_desc", "date", "popularity", "distance", "relevance"}
 
 
 def _parse_listing_types(raw: str | None) -> list[ListingType] | None:
@@ -53,61 +55,17 @@ def _parse_listing_types(raw: str | None) -> list[ListingType] | None:
         try:
             values.append(ListingType(cleaned))
         except ValueError:
-            raise_api_error(422, "VALIDATION_ERROR", "Some fields are invalid", {"fields": {"types": f"Invalid listing type: {cleaned}"}})
+            raise_api_error(
+                422,
+                "VALIDATION_ERROR",
+                "Some fields are invalid",
+                {"fields": {"types": f"Invalid listing type: {cleaned}"}},
+            )
     return values or None
 
 
-def _to_start_of_day(value: date | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.combine(value, time.min, tzinfo=UTC)
-
-
-def _to_end_of_day(value: date | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.combine(value, time.max, tzinfo=UTC)
-
-
-def _sort_seat_id_key(seat_id: str):
-    m = re.match(r"^([A-Za-z]+)(\d+)$", seat_id)
-    if not m:
-        return (seat_id, 0)
-    return (m.group(1), int(m.group(2)))
-
-
-def _normalize_ticket_pricing(ticket_pricing: Any) -> dict[str, float] | None:
-    if isinstance(ticket_pricing, dict):
-        normalized = {
-            str(k).strip().upper(): float(v)
-            for k, v in ticket_pricing.items()
-            if str(k).strip() and v is not None
-        }
-        return normalized or None
-
-    if isinstance(ticket_pricing, list):
-        normalized: dict[str, float] = {}
-        for item in ticket_pricing:
-            if not isinstance(item, dict):
-                continue
-            key_value = item.get("type") or item.get("key") or item.get("category")
-            key = str(key_value).strip().upper() if key_value is not None else ""
-            if not key:
-                continue
-            value = item.get("price")
-            if value is None:
-                value = item.get("amount")
-            try:
-                normalized[key] = float(value)
-            except (TypeError, ValueError):
-                continue
-        return normalized or None
-
-    return None
-
-
 def _serialize_occurrence(occ, venue_name: str | None = None) -> dict[str, Any]:
-    ticket_pricing = _normalize_ticket_pricing(occ.ticket_pricing)
+    ticket_pricing = normalize_ticket_pricing(occ.ticket_pricing)
 
     return {
         "id": occ.id,
@@ -123,15 +81,17 @@ def _serialize_occurrence(occ, venue_name: str | None = None) -> dict[str, Any]:
     }
 
 
-async def _venue_name_map_for_occurrences(db: AsyncSession, occurrences: list[Any]) -> dict[Any, str]:
-    venue_ids = sorted({occ.venue_id for occ in occurrences if getattr(occ, "venue_id", None)})
+async def _venue_name_map_for_occurrences(
+    db: AsyncSession, occurrences: list[Any]
+) -> dict[Any, str]:
+    venue_ids = sorted(
+        {occ.venue_id for occ in occurrences if getattr(occ, "venue_id", None)}
+    )
     if not venue_ids:
         return {}
 
     rows = (
-        await db.execute(
-            select(Venue.id, Venue.name).where(Venue.id.in_(venue_ids))
-        )
+        await db.execute(select(Venue.id, Venue.name).where(Venue.id.in_(venue_ids)))
     ).all()
     return {row[0]: row[1] for row in rows}
 
@@ -167,14 +127,24 @@ async def get_listings(
     db: AsyncSession = Depends(get_db),
 ):
     if sort not in SORT_OPTIONS:
-        raise_api_error(422, "VALIDATION_ERROR", "Some fields are invalid", {"fields": {"sort": "Invalid sort value"}})
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"sort": "Invalid sort value"}},
+        )
 
     if sort == "distance" and (user_lat is None or user_lon is None):
         raise_api_error(
             422,
             "VALIDATION_ERROR",
             "Some fields are invalid",
-            {"fields": {"user_lat": "Required for distance sort", "user_lon": "Required for distance sort"}},
+            {
+                "fields": {
+                    "user_lat": "Required for distance sort",
+                    "user_lon": "Required for distance sort",
+                }
+            },
         )
 
     if radius_km is not None and (user_lat is None or user_lon is None):
@@ -182,12 +152,17 @@ async def get_listings(
             422,
             "VALIDATION_ERROR",
             "Some fields are invalid",
-            {"fields": {"user_lat": "Required for radius filter", "user_lon": "Required for radius filter"}},
+            {
+                "fields": {
+                    "user_lat": "Required for radius filter",
+                    "user_lon": "Required for radius filter",
+                }
+            },
         )
 
     type_values = _parse_listing_types(types)
-    start_dt = _to_start_of_day(date_from)
-    end_dt = _to_end_of_day(date_to)
+    start_dt = to_start_of_day(date_from)
+    end_dt = to_end_of_day(date_to)
 
     rows, total = await list_listings(
         db,
@@ -217,10 +192,16 @@ async def get_listings(
         listing, city, _venue, is_wishlisted, _next_start, *rest = row
         distance_km = float(rest[0]) if rest else None
         next_occurrence = next_occurrences.get(listing.id)
-        gallery_image_urls = listing.gallery_image_urls if isinstance(listing.gallery_image_urls, list) else []
+        gallery_image_urls = (
+            listing.gallery_image_urls
+            if isinstance(listing.gallery_image_urls, list)
+            else []
+        )
         if not gallery_image_urls and listing.cover_image_url:
             gallery_image_urls = [listing.cover_image_url]
-        cover_image_url = listing.cover_image_url or (gallery_image_urls[0] if gallery_image_urls else None)
+        cover_image_url = listing.cover_image_url or (
+            gallery_image_urls[0] if gallery_image_urls else None
+        )
 
         item = {
             "id": listing.id,
@@ -258,12 +239,20 @@ async def get_listing_detail(id: UUID, db: AsyncSession = Depends(get_db)):
         raise_api_error(404, "NOT_FOUND", "Listing not found")
 
     listing, city, venue = record
-    occurrences = await list_occurrences_for_listing(db, listing_id=id, date_from=None, date_to=None)
+    occurrences = await list_occurrences_for_listing(
+        db, listing_id=id, date_from=None, date_to=None
+    )
     venue_name_map = await _venue_name_map_for_occurrences(db, occurrences)
-    gallery_image_urls = listing.gallery_image_urls if isinstance(listing.gallery_image_urls, list) else []
+    gallery_image_urls = (
+        listing.gallery_image_urls
+        if isinstance(listing.gallery_image_urls, list)
+        else []
+    )
     if not gallery_image_urls and listing.cover_image_url:
         gallery_image_urls = [listing.cover_image_url]
-    cover_image_url = listing.cover_image_url or (gallery_image_urls[0] if gallery_image_urls else None)
+    cover_image_url = listing.cover_image_url or (
+        gallery_image_urls[0] if gallery_image_urls else None
+    )
 
     return {
         "listing": {
@@ -291,7 +280,10 @@ async def get_listing_detail(id: UUID, db: AsyncSession = Depends(get_db)):
             "created_at": listing.created_at,
             "updated_at": listing.updated_at,
         },
-        "occurrences": [_serialize_occurrence(occ, venue_name_map.get(occ.venue_id)) for occ in occurrences],
+        "occurrences": [
+            _serialize_occurrence(occ, venue_name_map.get(occ.venue_id))
+            for occ in occurrences
+        ],
     }
 
 
@@ -309,12 +301,17 @@ async def get_listing_occurrences(
     occurrences = await list_occurrences_for_listing(
         db,
         listing_id=id,
-        date_from=_to_start_of_day(date_from),
-        date_to=_to_end_of_day(date_to),
+        date_from=to_start_of_day(date_from),
+        date_to=to_end_of_day(date_to),
     )
     venue_name_map = await _venue_name_map_for_occurrences(db, occurrences)
 
-    return {"items": [_serialize_occurrence(occ, venue_name_map.get(occ.venue_id)) for occ in occurrences]}
+    return {
+        "items": [
+            _serialize_occurrence(occ, venue_name_map.get(occ.venue_id))
+            for occ in occurrences
+        ]
+    }
 
 
 @router.get("/occurrences/{id}/seats", response_model=SeatMapResponse)
@@ -334,22 +331,21 @@ async def get_occurrence_seats(id: UUID, db: AsyncSession = Depends(get_db)):
 
     listing = listing_record[0]
     if listing.type != ListingType.MOVIE:
-        raise_api_error(400, "INVALID_REQUEST", "Seat map is only available for movie occurrences")
+        raise_api_error(
+            400, "INVALID_REQUEST", "Seat map is only available for movie occurrences"
+        )
 
-    ticket_pricing = _normalize_ticket_pricing(occurrence.ticket_pricing)
-    default_category = next(iter(ticket_pricing.keys()), None) if ticket_pricing else None
+    ticket_pricing = normalize_ticket_pricing(occurrence.ticket_pricing)
+    default_category = (
+        next(iter(ticket_pricing.keys()), None) if ticket_pricing else None
+    )
 
-    raw_seat_layout = occurrence.seat_layout
+    seat_layout = normalize_seat_layout(occurrence.seat_layout)
+
+    # Still need to handle legacy dynamic DB state overlay on the layout logic
     legacy_states: dict[str, dict[str, str | None]] = {}
-
-    if isinstance(raw_seat_layout, dict):
-        seat_layout = raw_seat_layout
-    elif isinstance(raw_seat_layout, list):
-        rows_set: set[str] = set()
-        max_column = 0
-        seat_category_map: dict[str, str] = {}
-
-        for item in raw_seat_layout:
+    if isinstance(occurrence.seat_layout, list):
+        for item in occurrence.seat_layout:
             if not isinstance(item, dict):
                 continue
 
@@ -360,45 +356,22 @@ async def get_occurrence_seats(id: UUID, db: AsyncSession = Depends(get_db)):
                 number = item.get("number")
                 try:
                     column_num = int(number)
+                    if not row_name or column_num <= 0:
+                        continue
+                    seat_id = f"{row_name}{column_num}"
                 except (TypeError, ValueError):
                     continue
-                if not row_name or column_num <= 0:
-                    continue
-                seat_id = f"{row_name}{column_num}"
-
-            match = re.match(r"^([A-Za-z]+)(\d+)$", seat_id)
-            if match:
-                rows_set.add(match.group(1))
-                max_column = max(max_column, int(match.group(2)))
 
             category_value = item.get("category")
-            category = str(category_value).strip() if isinstance(category_value, str) else ""
-            if category:
-                seat_category_map[seat_id] = category
-            elif default_category:
-                seat_category_map[seat_id] = default_category
+            category = (
+                str(category_value).strip() if isinstance(category_value, str) else ""
+            )
 
-            raw_status = str(item.get("status") or "available").strip().upper()
-            if raw_status in {"BOOKED", "SOLD", "UNAVAILABLE"}:
-                normalized_state = "BOOKED"
-            else:
-                # Dynamic lock state comes from SeatLock rows, not from static seat layout payload.
-                normalized_state = "AVAILABLE"
-
+            # Dynamic lock state comes from SeatLock rows, not from static seat layout payload.
             legacy_states[seat_id] = {
-                "state": normalized_state,
+                "state": "AVAILABLE",
                 "category": category or default_category,
             }
-
-        seat_layout = {
-            "version": 1,
-            "rows": sorted(rows_set),
-            "columns": max_column,
-            "aisles_after": [],
-            "seat_category_map": seat_category_map,
-        }
-    else:
-        seat_layout = {}
 
     try:
         version = int(seat_layout.get("version", 1))
@@ -406,7 +379,11 @@ async def get_occurrence_seats(id: UUID, db: AsyncSession = Depends(get_db)):
         version = 1
 
     rows_raw = seat_layout.get("rows", [])
-    rows = [row for row in rows_raw if isinstance(row, str)] if isinstance(rows_raw, list) else []
+    rows = (
+        [row for row in rows_raw if isinstance(row, str)]
+        if isinstance(rows_raw, list)
+        else []
+    )
 
     try:
         columns = int(seat_layout.get("columns", 0))
@@ -415,7 +392,11 @@ async def get_occurrence_seats(id: UUID, db: AsyncSession = Depends(get_db)):
 
     seat_category_map = {}
     if isinstance(seat_layout.get("seat_category_map"), dict):
-        seat_category_map = {str(k): str(v) for k, v in seat_layout["seat_category_map"].items() if v is not None}
+        seat_category_map = {
+            str(k): str(v)
+            for k, v in seat_layout["seat_category_map"].items()
+            if v is not None
+        }
 
     all_seats: set[str] = set(seat_category_map.keys())
     all_seats.update(legacy_states.keys())
@@ -424,13 +405,15 @@ async def get_occurrence_seats(id: UUID, db: AsyncSession = Depends(get_db)):
             for col in range(1, columns + 1):
                 all_seats.add(f"{row_name}{col}")
 
-    booked = await get_confirmed_booked_seats(db, occurrence.id)
-    locked = await get_active_seat_locks(db, occurrence.id, now=now)
+    booked, locked = await asyncio.gather(
+        get_confirmed_booked_seats(db, occurrence.id),
+        get_active_seat_locks(db, occurrence.id, now=now),
+    )
     all_seats.update(booked)
     all_seats.update(locked.keys())
 
     seat_states = []
-    for seat_id in sorted(all_seats, key=_sort_seat_id_key):
+    for seat_id in sorted(all_seats, key=sort_seat_id_key):
         legacy_state = legacy_states.get(seat_id)
         state = legacy_state["state"] if legacy_state else "AVAILABLE"
         if seat_id in booked:
@@ -441,7 +424,8 @@ async def get_occurrence_seats(id: UUID, db: AsyncSession = Depends(get_db)):
         seat_states.append(
             {
                 "seat_id": seat_id,
-                "category": seat_category_map.get(seat_id) or (legacy_state["category"] if legacy_state else default_category),
+                "category": seat_category_map.get(seat_id)
+                or (legacy_state["category"] if legacy_state else default_category),
                 "state": state,
             }
         )

@@ -1,4 +1,4 @@
-import re
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
@@ -11,9 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependency import get_current_user
 from app.core.errors import raise_api_error
+from app.utils.datetime_utils import reference_end_time
 from app.models.booking import Booking
 from app.models.booking_idempotency import BookingIdempotency
-from app.models.enums import BookingStatus, DiscountType, ListingStatus, ListingType, OccurrenceStatus, SeatLockStatus
+from app.models.enums import (
+    BookingStatus,
+    DiscountType,
+    ListingStatus,
+    ListingType,
+    OccurrenceStatus,
+    SeatLockStatus,
+)
 from app.models.seat_lock import SeatLock
 from app.models.user_offer_usage import UserOfferUsage
 from app.repository.booking import (
@@ -44,7 +52,7 @@ from app.schema.booking import (
     ConfirmBookingRequest,
     RazorpayOrderResponse,
 )
-from app.schema.common import MessageResponse, PaginatedResponse
+from app.schema.common import PaginatedResponse
 from app.services.razorpay import (
     create_razorpay_order,
     get_public_key_id,
@@ -53,10 +61,15 @@ from app.services.razorpay import (
     verify_payment_signature,
 )
 from app.utils.pagination import build_paginated_response
+from app.utils.pricing import TWO_DP, ticket_price_map
+from app.utils.seat_layout import (
+    normalize_seat_layout,
+    valid_seat_ids_from_layout,
+    seat_category_map_from_layout,
+)
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
-TWO_DP = Decimal("0.01")
 TAX_RATE = Decimal("0.18")
 HOLD_MINUTES = 10
 
@@ -91,37 +104,21 @@ def _extract_confirmed_seats(bookings: list[Booking]) -> set[str]:
     return seats
 
 
-def _ticket_price_map(ticket_pricing: Any) -> dict[str, Decimal]:
-    if isinstance(ticket_pricing, dict):
-        return {str(k).strip().upper(): _decimal(v) for k, v in ticket_pricing.items() if str(k).strip() and v is not None}
-
-    if isinstance(ticket_pricing, list):
-        mapped: dict[str, Decimal] = {}
-        for item in ticket_pricing:
-            if not isinstance(item, dict):
-                continue
-            key_value = item.get("type") or item.get("key") or item.get("category")
-            key = str(key_value).strip().upper() if key_value is not None else ""
-            if not key:
-                continue
-            value = item.get("price")
-            if value is None:
-                value = item.get("amount")
-            mapped[key] = _decimal(value or 0)
-        return mapped
-
-    return {}
-
-
-def _reference_end_time(start_time: datetime | None, end_time: datetime | None) -> datetime | None:
-    return end_time or start_time
-
-
-def _booking_scope_match(scope: str, booking: Booking, occurrence_end: datetime | None, now: datetime) -> bool:
+def _booking_scope_match(
+    scope: str, booking: Booking, occurrence_end: datetime | None, now: datetime
+) -> bool:
     if scope == "cancelled":
-        return booking.status in {BookingStatus.CANCELLED, BookingStatus.EXPIRED, BookingStatus.FAILED}
+        return booking.status in {
+            BookingStatus.CANCELLED,
+            BookingStatus.EXPIRED,
+            BookingStatus.FAILED,
+        }
     if scope == "past":
-        return booking.status == BookingStatus.CONFIRMED and occurrence_end is not None and occurrence_end < now
+        return (
+            booking.status == BookingStatus.CONFIRMED
+            and occurrence_end is not None
+            and occurrence_end < now
+        )
     return booking.status in {BookingStatus.HOLD, BookingStatus.CONFIRMED} and (
         occurrence_end is None or occurrence_end >= now
     )
@@ -135,15 +132,23 @@ def _base_and_tax_from_breakdown(booking: Booking) -> tuple[Decimal, Decimal]:
             return _decimal(base_amount), _decimal(tax_amount)
 
     total = _decimal(booking.total_price or 0)
-    base = (total / (Decimal("1.00") + TAX_RATE)).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+    base = (total / (Decimal("1.00") + TAX_RATE)).quantize(
+        TWO_DP, rounding=ROUND_HALF_UP
+    )
     tax = (total - base).quantize(TWO_DP, rounding=ROUND_HALF_UP)
     return base, tax
 
 
-async def _serialize_booking(db: AsyncSession, booking: Booking, now: datetime | None = None) -> dict[str, Any]:
+async def _serialize_booking(
+    db: AsyncSession, booking: Booking, now: datetime | None = None
+) -> dict[str, Any]:
     reference = now or datetime.now(UTC)
     occurrence = await get_occurrence(db, booking.occurrence_id, for_update=False)
-    reference_end = _reference_end_time(occurrence.start_time, occurrence.end_time) if occurrence else None
+    reference_end = (
+        reference_end_time(occurrence.start_time, occurrence.end_time)
+        if occurrence
+        else None
+    )
     hold_active = (
         booking.status == BookingStatus.HOLD
         and booking.hold_expires_at is not None
@@ -167,7 +172,9 @@ async def _serialize_booking(db: AsyncSession, booking: Booking, now: datetime |
         "occurrence_id": booking.occurrence_id,
         "listing_snapshot": booking.listing_snapshot,
         "booked_seats": _normalize_seat_ids(booking.booked_seats),
-        "ticket_breakdown": booking.ticket_breakdown if isinstance(booking.ticket_breakdown, dict) else {},
+        "ticket_breakdown": booking.ticket_breakdown
+        if isinstance(booking.ticket_breakdown, dict)
+        else {},
         "quantity": int(booking.quantity or 0),
         "unit_price": booking.unit_price,
         "total_price": booking.total_price,
@@ -183,87 +190,19 @@ async def _serialize_booking(db: AsyncSession, booking: Booking, now: datetime |
         "hold_expires_at": booking.hold_expires_at,
         "can_confirm": hold_active,
         "can_cancel": can_cancel,
-        "cancellation_deadline": occurrence.start_time if can_cancel and occurrence else None,
+        "cancellation_deadline": occurrence.start_time
+        if can_cancel and occurrence
+        else None,
         "created_at": booking.created_at,
         "updated_at": booking.updated_at,
         "applied_offer": applied_offer,
     }
 
 
-def _seat_category_map_from_layout(seat_layout: Any) -> dict[str, str]:
-    normalized_layout = _normalize_seat_layout(seat_layout)
-    mapping = normalized_layout.get("seat_category_map")
-    if not isinstance(mapping, dict):
-        return {}
-    return {str(k).upper(): str(v).upper() for k, v in mapping.items() if v is not None}
-
-
-def _normalize_seat_layout(seat_layout: Any) -> dict[str, Any]:
-    if isinstance(seat_layout, dict):
-        return seat_layout
-
-    if not isinstance(seat_layout, list):
-        return {}
-
-    rows_set: set[str] = set()
-    max_column = 0
-    seat_category_map: dict[str, str] = {}
-
-    for item in seat_layout:
-        if not isinstance(item, dict):
-            continue
-
-        seat_id_value = item.get("id")
-        seat_id = str(seat_id_value).strip().upper() if seat_id_value is not None else ""
-        if not seat_id:
-            row_name = str(item.get("row") or "").strip().upper()
-            try:
-                column_num = int(item.get("number"))
-            except (TypeError, ValueError):
-                continue
-            if not row_name or column_num <= 0:
-                continue
-            seat_id = f"{row_name}{column_num}"
-
-        match = re.match(r"^([A-Z]+)(\d+)$", seat_id)
-        if match:
-            rows_set.add(match.group(1))
-            max_column = max(max_column, int(match.group(2)))
-
-        category_value = item.get("category")
-        if isinstance(category_value, str) and category_value.strip():
-            seat_category_map[seat_id] = category_value.strip().upper()
-
-    return {
-        "version": 1,
-        "rows": sorted(rows_set),
-        "columns": max_column,
-        "seat_category_map": seat_category_map,
-    }
-
-
-def _valid_seat_ids_from_layout(seat_layout: Any) -> set[str]:
-    normalized_layout = _normalize_seat_layout(seat_layout)
-    if not isinstance(normalized_layout, dict):
-        return set()
-    seat_map = _seat_category_map_from_layout(normalized_layout)
-    if seat_map:
-        return set(seat_map.keys())
-    rows = normalized_layout.get("rows")
-    columns = normalized_layout.get("columns")
-    if not isinstance(rows, list) or not isinstance(columns, int) or columns <= 0:
-        return set()
-    valid: set[str] = set()
-    for row in rows:
-        for col in range(1, columns + 1):
-            valid.add(f"{str(row).upper()}{col}")
-    return valid
-
-
 def _occurrence_is_bookable(occurrence, now: datetime) -> bool:
     if occurrence.status != OccurrenceStatus.SCHEDULED:
         return False
-    reference_end = _reference_end_time(occurrence.start_time, occurrence.end_time)
+    reference_end = reference_end_time(occurrence.start_time, occurrence.end_time)
     return reference_end is None or reference_end >= now
 
 
@@ -323,18 +262,24 @@ def _extract_razorpay_payload(payment_payload: Any) -> tuple[str, str, str]:
     return order_id, payment_id, signature
 
 
-def _lock_request_matches_booking(booking: Booking, payload: BookingLockRequest, seat_ids: list[str]) -> bool:
+def _lock_request_matches_booking(
+    booking: Booking, payload: BookingLockRequest, seat_ids: list[str]
+) -> bool:
     booking_seats = _normalize_seat_ids(booking.booked_seats)
     if sorted(booking_seats) != sorted(seat_ids):
         return False
 
     request_breakdown = _normalize_ticket_request_breakdown(payload.ticket_breakdown)
     if request_breakdown:
-        booking_breakdown = _normalize_ticket_request_breakdown(booking.ticket_breakdown)
+        booking_breakdown = _normalize_ticket_request_breakdown(
+            booking.ticket_breakdown
+        )
         if booking_breakdown != request_breakdown:
             return False
 
-    if payload.quantity is not None and int(payload.quantity) != int(booking.quantity or 0):
+    if payload.quantity is not None and int(payload.quantity) != int(
+        booking.quantity or 0
+    ):
         return False
 
     return True
@@ -348,14 +293,16 @@ def _calculate_price_components(
     quantity: int | None,
     ticket_breakdown: dict[str, int] | None,
 ) -> tuple[Decimal, Decimal, Decimal, int, dict[str, Any]]:
-    pricing_map = _ticket_price_map(occurrence.ticket_pricing)
+    pricing_map = ticket_price_map(occurrence.ticket_pricing)
     base_amount = Decimal("0")
     normalized_quantity = int(quantity or 1)
-    normalized_breakdown = {k: int(v) for k, v in (ticket_breakdown or {}).items() if int(v) > 0}
+    normalized_breakdown = {
+        k: int(v) for k, v in (ticket_breakdown or {}).items() if int(v) > 0
+    }
 
     if listing_type == ListingType.MOVIE:
         normalized_quantity = len(seat_ids)
-        seat_category_map = _seat_category_map_from_layout(occurrence.seat_layout)
+        seat_category_map = seat_category_map_from_layout(occurrence.seat_layout)
         fallback_price = next(iter(pricing_map.values()), Decimal("0"))
         for seat_id in seat_ids:
             category = seat_category_map.get(seat_id.upper())
@@ -383,7 +330,9 @@ def _calculate_price_components(
         if not normalized_breakdown:
             normalized_quantity = max(1, int(quantity or 1))
             normalized_breakdown = {default_tier: normalized_quantity}
-            base_amount = pricing_map.get(default_tier, fallback_price) * Decimal(normalized_quantity)
+            base_amount = pricing_map.get(default_tier, fallback_price) * Decimal(
+                normalized_quantity
+            )
 
     tax_amount = (base_amount * TAX_RATE).quantize(TWO_DP, rounding=ROUND_HALF_UP)
     gross_amount = (base_amount + tax_amount).quantize(TWO_DP, rounding=ROUND_HALF_UP)
@@ -409,8 +358,9 @@ async def create_booking_lock(
     db: AsyncSession = Depends(get_db),
 ):
     now = datetime.now(UTC)
-    await expire_stale_holds(db, now=now)
-    await expire_stale_seat_locks(db, now=now)
+    await asyncio.gather(
+        expire_stale_holds(db, now=now), expire_stale_seat_locks(db, now=now)
+    )
 
     occurrence = await get_occurrence(db, payload.occurrence_id, for_update=True)
     if not occurrence:
@@ -424,7 +374,9 @@ async def create_booking_lock(
 
     seat_ids = _normalize_seat_ids(payload.seat_ids)
     if listing.type == ListingType.MOVIE and not seat_ids:
-        raise_api_error(422, "INVALID_SEAT_INPUT", "Movie bookings require seat selection")
+        raise_api_error(
+            422, "INVALID_SEAT_INPUT", "Movie bookings require seat selection"
+        )
 
     existing_hold = await get_user_active_hold_for_occurrence(
         db,
@@ -433,12 +385,17 @@ async def create_booking_lock(
         now=now,
         for_update=True,
     )
-    if existing_hold and _lock_request_matches_booking(existing_hold, payload, seat_ids):
+    if existing_hold and _lock_request_matches_booking(
+        existing_hold, payload, seat_ids
+    ):
         return {"booking": await _serialize_booking(db, existing_hold, now=now)}
 
-    seat_layout = _normalize_seat_layout(occurrence.seat_layout)
+    seat_layout = normalize_seat_layout(occurrence.seat_layout)
     current_layout_version = int(seat_layout.get("version", 1))
-    if payload.seat_layout_version is not None and int(payload.seat_layout_version) != current_layout_version:
+    if (
+        payload.seat_layout_version is not None
+        and int(payload.seat_layout_version) != current_layout_version
+    ):
         raise_api_error(
             409,
             "SEAT_LAYOUT_VERSION_MISMATCH",
@@ -447,14 +404,30 @@ async def create_booking_lock(
         )
 
     if seat_ids:
-        valid_seat_ids = _valid_seat_ids_from_layout(seat_layout)
-        invalid_seat = next((seat for seat in seat_ids if valid_seat_ids and seat not in valid_seat_ids), None)
+        valid_seat_ids = valid_seat_ids_from_layout(seat_layout)
+        invalid_seat = next(
+            (
+                seat
+                for seat in seat_ids
+                if valid_seat_ids and seat not in valid_seat_ids
+            ),
+            None,
+        )
         if invalid_seat:
-            raise_api_error(422, "INVALID_SEAT_INPUT", "Invalid seat selection", {"seat_id": invalid_seat})
+            raise_api_error(
+                422,
+                "INVALID_SEAT_INPUT",
+                "Invalid seat selection",
+                {"seat_id": invalid_seat},
+            )
 
     if seat_ids:
-        confirmed_seat_set = _extract_confirmed_seats(await get_confirmed_bookings_for_occurrence(db, occurrence.id))
-        unavailable_confirmed = next((seat for seat in seat_ids if seat in confirmed_seat_set), None)
+        confirmed_seat_set = _extract_confirmed_seats(
+            await get_confirmed_bookings_for_occurrence(db, occurrence.id)
+        )
+        unavailable_confirmed = next(
+            (seat for seat in seat_ids if seat in confirmed_seat_set), None
+        )
         if unavailable_confirmed:
             raise_api_error(
                 409,
@@ -463,19 +436,29 @@ async def create_booking_lock(
                 {"seat_id": unavailable_confirmed},
             )
 
-        active_locks = await get_active_locks_for_seats(
-            db,
-            occurrence_id=occurrence.id,
-            seat_ids=seat_ids,
-            now=now,
-            for_update=True,
+        active_locks, user_active_locks = await asyncio.gather(
+            get_active_locks_for_seats(
+                db,
+                occurrence_id=occurrence.id,
+                seat_ids=seat_ids,
+                now=now,
+                for_update=True,
+            ),
+            get_user_active_locks_for_occurrence(
+                db,
+                occurrence_id=occurrence.id,
+                user_id=current_user.id,
+                now=now,
+                for_update=True,
+            ),
         )
         lock_by_seat = {lock.seat_id.upper(): lock for lock in active_locks}
         unavailable_locked = next(
             (
                 seat
                 for seat in seat_ids
-                if seat in lock_by_seat and lock_by_seat[seat].user_id != current_user.id
+                if seat in lock_by_seat
+                and lock_by_seat[seat].user_id != current_user.id
             ),
             None,
         )
@@ -487,13 +470,6 @@ async def create_booking_lock(
                 {"seat_id": unavailable_locked},
             )
 
-        user_active_locks = await get_user_active_locks_for_occurrence(
-            db,
-            occurrence_id=occurrence.id,
-            user_id=current_user.id,
-            now=now,
-            for_update=True,
-        )
         user_lock_by_seat = {row.seat_id.upper(): row for row in user_active_locks}
         hold_expires_at = now + timedelta(minutes=HOLD_MINUTES)
 
@@ -520,14 +496,18 @@ async def create_booking_lock(
         hold_expires_at = now + timedelta(minutes=HOLD_MINUTES)
 
     if occurrence.capacity_remaining <= 0:
-        raise_api_error(409, "SOLD_OUT", "No seats/tickets remaining for this occurrence")
+        raise_api_error(
+            409, "SOLD_OUT", "No seats/tickets remaining for this occurrence"
+        )
 
-    base_amount, tax_amount, gross_amount, normalized_quantity, normalized_breakdown = _calculate_price_components(
-        listing_type=listing.type,
-        occurrence=occurrence,
-        seat_ids=seat_ids,
-        quantity=payload.quantity,
-        ticket_breakdown=payload.ticket_breakdown,
+    base_amount, tax_amount, gross_amount, normalized_quantity, normalized_breakdown = (
+        _calculate_price_components(
+            listing_type=listing.type,
+            occurrence=occurrence,
+            seat_ids=seat_ids,
+            quantity=payload.quantity,
+            ticket_breakdown=payload.ticket_breakdown,
+        )
     )
 
     if normalized_quantity <= 0:
@@ -547,7 +527,9 @@ async def create_booking_lock(
         "currency": "INR",
     }
 
-    unit_price = (gross_amount / Decimal(max(1, normalized_quantity))).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+    unit_price = (gross_amount / Decimal(max(1, normalized_quantity))).quantize(
+        TWO_DP, rounding=ROUND_HALF_UP
+    )
 
     booking = Booking(
         user_id=current_user.id,
@@ -581,7 +563,9 @@ async def apply_offer_to_booking(
     now = datetime.now(UTC)
     await expire_stale_holds(db, now=now)
 
-    booking = await get_booking(db, booking_id, user_id=current_user.id, for_update=True)
+    booking = await get_booking(
+        db, booking_id, user_id=current_user.id, for_update=True
+    )
     if not booking:
         raise_api_error(404, "NOT_FOUND", "Booking not found")
     if booking.status == BookingStatus.EXPIRED:
@@ -591,7 +575,9 @@ async def apply_offer_to_booking(
             "Booking hold expired",
             {
                 "status": booking.status.value,
-                "hold_expires_at": booking.hold_expires_at.isoformat() if booking.hold_expires_at else None,
+                "hold_expires_at": booking.hold_expires_at.isoformat()
+                if booking.hold_expires_at
+                else None,
                 "server_time": now.isoformat(),
             },
         )
@@ -669,7 +655,9 @@ async def apply_offer_to_booking(
                 },
             )
 
-        allowed_categories = _normalize_text_set(applicability.get("categories"), uppercase=True)
+        allowed_categories = _normalize_text_set(
+            applicability.get("categories"), uppercase=True
+        )
         listing_category = (listing.category or "").strip()
         if allowed_categories and listing_category.upper() not in allowed_categories:
             raise_api_error(
@@ -742,13 +730,17 @@ async def apply_offer_to_booking(
     if offer.discount_type == DiscountType.FLAT:
         discount_amount = discount_value
     else:
-        discount_amount = (total_price * discount_value / Decimal("100")).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+        discount_amount = (total_price * discount_value / Decimal("100")).quantize(
+            TWO_DP, rounding=ROUND_HALF_UP
+        )
 
     if offer.max_discount_value is not None:
         discount_amount = min(discount_amount, _decimal(offer.max_discount_value))
 
     discount_amount = min(discount_amount, total_price)
-    final_price = (total_price - discount_amount).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+    final_price = (total_price - discount_amount).quantize(
+        TWO_DP, rounding=ROUND_HALF_UP
+    )
 
     booking.applied_offer_id = offer.id
     booking.discount_amount = discount_amount
@@ -759,7 +751,9 @@ async def apply_offer_to_booking(
     return {"booking": await _serialize_booking(db, booking, now=now)}
 
 
-@router.post("/{booking_id}/payments/razorpay/order", response_model=RazorpayOrderResponse)
+@router.post(
+    "/{booking_id}/payments/razorpay/order", response_model=RazorpayOrderResponse
+)
 async def create_razorpay_payment_order(
     booking_id: UUID,
     current_user=Depends(get_current_user),
@@ -768,7 +762,9 @@ async def create_razorpay_payment_order(
     now = datetime.now(UTC)
     await expire_stale_holds(db, now=now)
 
-    booking = await get_booking(db, booking_id, user_id=current_user.id, for_update=True)
+    booking = await get_booking(
+        db, booking_id, user_id=current_user.id, for_update=True
+    )
     if not booking:
         raise_api_error(404, "NOT_FOUND", "Booking not found")
     if booking.status == BookingStatus.EXPIRED:
@@ -780,7 +776,11 @@ async def create_razorpay_payment_order(
         await db.commit()
         raise_api_error(400, "BOOKING_EXPIRED", "Booking hold expired")
 
-    amount = int((_decimal(booking.final_price or booking.total_price or 0) * Decimal("100")).to_integral_value())
+    amount = int(
+        (
+            _decimal(booking.final_price or booking.total_price or 0) * Decimal("100")
+        ).to_integral_value()
+    )
     if amount <= 0:
         raise_api_error(400, "VALIDATION_ERROR", "Booking has invalid payable amount")
 
@@ -794,7 +794,9 @@ async def create_razorpay_payment_order(
         },
     )
 
-    snapshot_source = booking.listing_snapshot if isinstance(booking.listing_snapshot, dict) else {}
+    snapshot_source = (
+        booking.listing_snapshot if isinstance(booking.listing_snapshot, dict) else {}
+    )
     snapshot = dict(snapshot_source)
     snapshot["payment_order_id"] = order_payload["id"]
     snapshot["payment_order_created_at"] = now.isoformat()
@@ -830,12 +832,21 @@ async def confirm_booking(
 
     existing_idempotency = await get_booking_idempotency(db, x_idempotency_key)
     if existing_idempotency:
-        existing_booking = await get_booking(db, existing_idempotency.booking_id, user_id=current_user.id, for_update=False)
+        existing_booking = await get_booking(
+            db,
+            existing_idempotency.booking_id,
+            user_id=current_user.id,
+            for_update=False,
+        )
         if existing_booking:
             return {"booking": await _serialize_booking(db, existing_booking, now=now)}
-        raise_api_error(403, "FORBIDDEN", "Idempotency key does not belong to this user")
+        raise_api_error(
+            403, "FORBIDDEN", "Idempotency key does not belong to this user"
+        )
 
-    booking = await get_booking(db, booking_id, user_id=current_user.id, for_update=True)
+    booking = await get_booking(
+        db, booking_id, user_id=current_user.id, for_update=True
+    )
     if not booking:
         raise_api_error(404, "NOT_FOUND", "Booking not found")
     if booking.status == BookingStatus.EXPIRED:
@@ -860,10 +871,16 @@ async def confirm_booking(
     if listing.type == ListingType.MOVIE:
         seat_ids = _normalize_seat_ids(booking.booked_seats)
         if not seat_ids:
-            raise_api_error(400, "INVALID_SEAT_INPUT", "Movie booking has no selected seats")
+            raise_api_error(
+                400, "INVALID_SEAT_INPUT", "Movie booking has no selected seats"
+            )
 
-        confirmed_seat_set = _extract_confirmed_seats(await get_confirmed_bookings_for_occurrence(db, occurrence.id))
-        conflict_confirmed = next((seat for seat in seat_ids if seat in confirmed_seat_set), None)
+        confirmed_seat_set = _extract_confirmed_seats(
+            await get_confirmed_bookings_for_occurrence(db, occurrence.id)
+        )
+        conflict_confirmed = next(
+            (seat for seat in seat_ids if seat in confirmed_seat_set), None
+        )
         if conflict_confirmed:
             raise_api_error(
                 409,
@@ -905,16 +922,24 @@ async def confirm_booking(
     if occurrence.capacity_remaining < booking.quantity:
         raise_api_error(409, "SOLD_OUT", "Insufficient capacity for this occurrence")
 
-    occurrence.capacity_remaining = max(0, occurrence.capacity_remaining - booking.quantity)
+    occurrence.capacity_remaining = max(
+        0, occurrence.capacity_remaining - booking.quantity
+    )
     if occurrence.capacity_remaining == 0:
         occurrence.status = OccurrenceStatus.SOLD_OUT
 
     payment_method = (payload.payment_method or "RAZORPAY_DUMMY").strip().upper()
-    payment_payload = payload.payment_payload if isinstance(payload.payment_payload, dict) else {}
+    payment_payload = (
+        payload.payment_payload if isinstance(payload.payment_payload, dict) else {}
+    )
     if payment_method.startswith("RAZORPAY"):
         order_id, payment_id, signature = _extract_razorpay_payload(payment_payload)
 
-        snapshot = booking.listing_snapshot if isinstance(booking.listing_snapshot, dict) else {}
+        snapshot = (
+            booking.listing_snapshot
+            if isinstance(booking.listing_snapshot, dict)
+            else {}
+        )
         expected_order_id = str(snapshot.get("payment_order_id") or "").strip()
         if expected_order_id and order_id and expected_order_id != order_id:
             raise_api_error(
@@ -934,7 +959,9 @@ async def confirm_booking(
                 "PAYMENT_VALIDATION_FAILED",
                 "Missing Razorpay payment details.",
             )
-        if not verify_payment_signature(order_id=order_id, payment_id=payment_id, signature=signature):
+        if not verify_payment_signature(
+            order_id=order_id, payment_id=payment_id, signature=signature
+        ):
             raise_api_error(
                 400,
                 "PAYMENT_VALIDATION_FAILED",
@@ -975,8 +1002,12 @@ async def confirm_booking(
                 for_update=False,
             )
             if existing_booking:
-                return {"booking": await _serialize_booking(db, existing_booking, now=now)}
-        raise_api_error(409, "CONFLICT", "Unable to confirm booking due to a concurrent update")
+                return {
+                    "booking": await _serialize_booking(db, existing_booking, now=now)
+                }
+        raise_api_error(
+            409, "CONFLICT", "Unable to confirm booking due to a concurrent update"
+        )
 
     await db.refresh(booking)
     return {"booking": await _serialize_booking(db, booking, now=now)}
@@ -991,19 +1022,30 @@ async def get_bookings(
     db: AsyncSession = Depends(get_db),
 ):
     if scope not in {"upcoming", "past", "cancelled"}:
-        raise_api_error(422, "VALIDATION_ERROR", "Some fields are invalid", {"fields": {"scope": "Invalid scope"}})
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"scope": "Invalid scope"}},
+        )
 
     now = datetime.now(UTC)
     await expire_stale_holds(db, now=now)
     await db.commit()
 
     bookings = await list_user_bookings(db, user_id=current_user.id)
-    occurrences = await get_occurrences_by_ids(db, [booking.occurrence_id for booking in bookings])
+    occurrences = await get_occurrences_by_ids(
+        db, [booking.occurrence_id for booking in bookings]
+    )
 
     scoped = []
     for booking in bookings:
         occurrence = occurrences.get(booking.occurrence_id)
-        reference_end = _reference_end_time(occurrence.start_time, occurrence.end_time) if occurrence else None
+        reference_end = (
+            reference_end_time(occurrence.start_time, occurrence.end_time)
+            if occurrence
+            else None
+        )
         if _booking_scope_match(scope, booking, reference_end, now):
             scoped.append(booking)
 
@@ -1023,7 +1065,9 @@ async def get_booking_by_id(
     await expire_stale_holds(db, now=now)
     await db.commit()
 
-    booking = await get_booking(db, booking_id, user_id=current_user.id, for_update=False)
+    booking = await get_booking(
+        db, booking_id, user_id=current_user.id, for_update=False
+    )
     if not booking:
         raise_api_error(404, "NOT_FOUND", "Booking not found")
     return {"booking": await _serialize_booking(db, booking, now=now)}
@@ -1040,7 +1084,9 @@ async def cancel_booking(
     await expire_stale_holds(db, now=now)
     await expire_stale_seat_locks(db, now=now)
 
-    booking = await get_booking(db, booking_id, user_id=current_user.id, for_update=True)
+    booking = await get_booking(
+        db, booking_id, user_id=current_user.id, for_update=True
+    )
     if not booking:
         raise_api_error(404, "NOT_FOUND", "Booking not found")
     if booking.status not in {BookingStatus.HOLD, BookingStatus.CONFIRMED}:
@@ -1064,8 +1110,14 @@ async def cancel_booking(
                 if lock.user_id == current_user.id:
                     lock.status = SeatLockStatus.RELEASED
     elif booking.status == BookingStatus.CONFIRMED:
-        occurrence.capacity_remaining = min(occurrence.capacity_total, occurrence.capacity_remaining + int(booking.quantity or 0))
-        if occurrence.status == OccurrenceStatus.SOLD_OUT and occurrence.capacity_remaining > 0:
+        occurrence.capacity_remaining = min(
+            occurrence.capacity_total,
+            occurrence.capacity_remaining + int(booking.quantity or 0),
+        )
+        if (
+            occurrence.status == OccurrenceStatus.SOLD_OUT
+            and occurrence.capacity_remaining > 0
+        ):
             occurrence.status = OccurrenceStatus.SCHEDULED
 
     booking.status = BookingStatus.CANCELLED

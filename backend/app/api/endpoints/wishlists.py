@@ -44,10 +44,16 @@ async def get_wishlist(
     for row in rows:
         listing, city, _venue, _wishlisted_at = row
         next_occurrence = next_occurrences.get(listing.id)
-        gallery_image_urls = listing.gallery_image_urls if isinstance(listing.gallery_image_urls, list) else []
+        gallery_image_urls = (
+            listing.gallery_image_urls
+            if isinstance(listing.gallery_image_urls, list)
+            else []
+        )
         if not gallery_image_urls and listing.cover_image_url:
             gallery_image_urls = [listing.cover_image_url]
-        cover_image_url = listing.cover_image_url or (gallery_image_urls[0] if gallery_image_urls else None)
+        cover_image_url = listing.cover_image_url or (
+            gallery_image_urls[0] if gallery_image_urls else None
+        )
 
         item = {
             "id": listing.id,

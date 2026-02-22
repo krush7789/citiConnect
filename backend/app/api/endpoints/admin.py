@@ -320,11 +320,17 @@ def _validate_price_range(price_min: Decimal | None, price_max: Decimal | None) 
             422,
             "VALIDATION_ERROR",
             "Some fields are invalid",
-            {"fields": {"price_max": "price_max must be greater than or equal to price_min"}},
+            {
+                "fields": {
+                    "price_max": "price_max must be greater than or equal to price_min"
+                }
+            },
         )
 
 
-def _validate_occurrence_window(start_time: datetime, end_time: datetime | None) -> None:
+def _validate_occurrence_window(
+    start_time: datetime, end_time: datetime | None
+) -> None:
     if end_time is not None and start_time >= end_time:
         raise_api_error(
             422,
@@ -334,12 +340,18 @@ def _validate_occurrence_window(start_time: datetime, end_time: datetime | None)
         )
 
 
-def _pagination_payload(items: list[dict[str, Any]], page: int, page_size: int, total: int) -> dict[str, Any]:
+def _pagination_payload(
+    items: list[dict[str, Any]], page: int, page_size: int, total: int
+) -> dict[str, Any]:
     return build_paginated_response(items, page=page, page_size=page_size, total=total)
 
 
-def _serialize_listing_row(listing: Listing, city_name: str | None, total_bookings: int) -> dict[str, Any]:
-    display_city = "All India" if _is_nationwide_city_name(city_name) else (city_name or "Unknown")
+def _serialize_listing_row(
+    listing: Listing, city_name: str | None, total_bookings: int
+) -> dict[str, Any]:
+    display_city = (
+        "All India" if _is_nationwide_city_name(city_name) else (city_name or "Unknown")
+    )
     return {
         "id": listing.id,
         "type": listing.type.value,
@@ -361,8 +373,14 @@ def _serialize_listing_detail(
     venue_address: str | None,
 ) -> dict[str, Any]:
     is_nationwide = _is_nationwide_city_name(city_name)
-    gallery_image_urls = listing.gallery_image_urls if isinstance(listing.gallery_image_urls, list) else []
-    cover_image_url = listing.cover_image_url or (gallery_image_urls[0] if gallery_image_urls else None)
+    gallery_image_urls = (
+        listing.gallery_image_urls
+        if isinstance(listing.gallery_image_urls, list)
+        else []
+    )
+    cover_image_url = listing.cover_image_url or (
+        gallery_image_urls[0] if gallery_image_urls else None
+    )
 
     return {
         "id": listing.id,
@@ -375,15 +393,21 @@ def _serialize_listing_detail(
         "venue_name": None if is_nationwide else venue_name,
         "address": None if is_nationwide else venue_address,
         "category": listing.category or "",
-        "price_min": float(listing.price_min) if listing.price_min is not None else None,
-        "price_max": float(listing.price_max) if listing.price_max is not None else None,
+        "price_min": float(listing.price_min)
+        if listing.price_min is not None
+        else None,
+        "price_max": float(listing.price_max)
+        if listing.price_max is not None
+        else None,
         "currency": "INR",
         "status": listing.status.value,
         "is_featured": bool(listing.is_featured),
         "offer_text": listing.offer_text or "",
         "cover_image_url": cover_image_url,
         "gallery_image_urls": gallery_image_urls,
-        "metadata": listing.metadata_json if isinstance(listing.metadata_json, dict) else {},
+        "metadata": listing.metadata_json
+        if isinstance(listing.metadata_json, dict)
+        else {},
         "vibe_tags": listing.vibe_tags if isinstance(listing.vibe_tags, list) else [],
         "is_nationwide": is_nationwide,
         "created_at": listing.created_at,
@@ -391,7 +415,9 @@ def _serialize_listing_detail(
     }
 
 
-def _serialize_occurrence_row(occurrence: Occurrence, venue_name: str | None) -> dict[str, Any]:
+def _serialize_occurrence_row(
+    occurrence: Occurrence, venue_name: str | None
+) -> dict[str, Any]:
     return {
         "id": occurrence.id,
         "listing_id": occurrence.listing_id,
@@ -439,32 +465,53 @@ async def get_dashboard(
     next_day = start_of_day + timedelta(days=1)
     week_ago = now - timedelta(days=7)
 
-    total_listings = int((await db.execute(select(func.count(Listing.id)))).scalar_one() or 0)
+    total_listings = int(
+        (await db.execute(select(func.count(Listing.id)))).scalar_one() or 0
+    )
     active_listings = int(
-        (await db.execute(select(func.count(Listing.id)).where(Listing.status == ListingStatus.PUBLISHED))).scalar_one()
+        (
+            await db.execute(
+                select(func.count(Listing.id)).where(
+                    Listing.status == ListingStatus.PUBLISHED
+                )
+            )
+        ).scalar_one()
         or 0
     )
-    total_bookings = int((await db.execute(select(func.count(Booking.id)))).scalar_one() or 0)
+    total_bookings = int(
+        (await db.execute(select(func.count(Booking.id)))).scalar_one() or 0
+    )
     bookings_today = int(
         (
             await db.execute(
-                select(func.count(Booking.id)).where(Booking.created_at >= start_of_day, Booking.created_at < next_day)
+                select(func.count(Booking.id)).where(
+                    Booking.created_at >= start_of_day, Booking.created_at < next_day
+                )
             )
         ).scalar_one()
         or 0
     )
     bookings_this_week = int(
-        (await db.execute(select(func.count(Booking.id)).where(Booking.created_at >= week_ago))).scalar_one() or 0
-    )
-    active_users = int((await db.execute(select(func.count(func.distinct(Booking.user_id))))).scalar_one() or 0)
-    total_revenue = (
         (
             await db.execute(
-                select(func.coalesce(func.sum(Booking.final_price), 0)).where(Booking.status == BookingStatus.CONFIRMED)
+                select(func.count(Booking.id)).where(Booking.created_at >= week_ago)
             )
         ).scalar_one()
-        or Decimal("0")
+        or 0
     )
+    active_users = int(
+        (
+            await db.execute(select(func.count(func.distinct(Booking.user_id))))
+        ).scalar_one()
+        or 0
+    )
+    total_revenue = (
+        await db.execute(
+            select(func.coalesce(func.sum(Booking.final_price), 0)).where(
+                Booking.status == BookingStatus.CONFIRMED
+            )
+        )
+    ).scalar_one() or Decimal("0")
 
     recent_rows = (
         await db.execute(
@@ -500,7 +547,9 @@ async def get_dashboard(
         )
     ).all()
 
-    category_group_expr = func.coalesce(func.nullif(func.trim(Listing.category), ""), "Uncategorized")
+    category_group_expr = func.coalesce(
+        func.nullif(func.trim(Listing.category), ""), "Uncategorized"
+    )
     category_rows = (
         await db.execute(
             select(
@@ -512,7 +561,10 @@ async def get_dashboard(
             .join(Booking, Booking.occurrence_id == Occurrence.id)
             .where(Booking.status == BookingStatus.CONFIRMED)
             .group_by(category_group_expr)
-            .order_by(func.coalesce(func.sum(Booking.final_price), 0).desc(), category_group_expr.asc())
+            .order_by(
+                func.coalesce(func.sum(Booking.final_price), 0).desc(),
+                category_group_expr.asc(),
+            )
             .limit(8)
         )
     ).all()
@@ -622,14 +674,15 @@ async def get_admin_listings(
             stmt = stmt.where(City.name.ilike(city_query))
             count_stmt = count_stmt.where(City.name.ilike(city_query))
 
-    stmt = stmt.order_by(Listing.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(Listing.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     total = int((await db.execute(count_stmt)).scalar_one() or 0)
     rows = (await db.execute(stmt)).all()
 
-    items = [
-        _serialize_listing_row(row[0], row[1], int(row[2] or 0))
-        for row in rows
-    ]
+    items = [_serialize_listing_row(row[0], row[1], int(row[2] or 0)) for row in rows]
     return _pagination_payload(items, page, page_size, total)
 
 
@@ -652,7 +705,11 @@ async def get_admin_listing_by_id(
         raise_api_error(404, "NOT_FOUND", "Listing not found")
 
     listing, city_name, venue_name, venue_address = row
-    return {"listing": _serialize_listing_detail(listing, city_name, venue_name, venue_address)}
+    return {
+        "listing": _serialize_listing_detail(
+            listing, city_name, venue_name, venue_address
+        )
+    }
 
 
 @router.post("/listings", response_model=AdminListingCreateResponse)
@@ -676,7 +733,9 @@ async def create_admin_listing(
         venue_id=venue.id,
         category=_normalize_optional_text(payload.category),
         price_min=payload.price_min,
-        price_max=payload.price_max if payload.price_max is not None else payload.price_min,
+        price_max=payload.price_max
+        if payload.price_max is not None
+        else payload.price_min,
         cover_image_url=_normalize_optional_text(payload.cover_image_url),
         gallery_image_urls=_normalize_string_list(payload.gallery_image_urls),
         is_featured=payload.is_featured,
@@ -748,8 +807,12 @@ async def update_admin_listing(
         venue_id=venue_candidate,
     )
 
-    next_price_min = payload.price_min if payload.price_min is not None else listing.price_min
-    next_price_max = payload.price_max if payload.price_max is not None else listing.price_max
+    next_price_min = (
+        payload.price_min if payload.price_min is not None else listing.price_min
+    )
+    next_price_max = (
+        payload.price_max if payload.price_max is not None else listing.price_max
+    )
     _validate_price_range(next_price_min, next_price_max)
 
     diff: dict[str, Any] = {}
@@ -840,13 +903,17 @@ async def archive_admin_listing(
         listing.status = ListingStatus.ARCHIVED
 
     occurrence_rows = (
-        await db.execute(
-            select(Occurrence).where(
-                Occurrence.listing_id == listing.id,
-                Occurrence.status == OccurrenceStatus.SCHEDULED,
+        (
+            await db.execute(
+                select(Occurrence).where(
+                    Occurrence.listing_id == listing.id,
+                    Occurrence.status == OccurrenceStatus.SCHEDULED,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for occurrence in occurrence_rows:
         reference_end = occurrence.end_time or occurrence.start_time
@@ -860,14 +927,20 @@ async def archive_admin_listing(
         action="ARCHIVE_LISTING",
         entity_type="LISTING",
         entity_id=str(listing.id),
-        diff={"status": ListingStatus.ARCHIVED.value, "cancelled_occurrences": cancelled_occurrences},
+        diff={
+            "status": ListingStatus.ARCHIVED.value,
+            "cancelled_occurrences": cancelled_occurrences,
+        },
     )
     await db.commit()
 
     return {"message": "Listing archived successfully"}
 
 
-@router.get("/listings/{listing_id}/occurrences", response_model=PaginatedResponse[AdminOccurrenceItem])
+@router.get(
+    "/listings/{listing_id}/occurrences",
+    response_model=PaginatedResponse[AdminOccurrenceItem],
+)
 async def get_admin_occurrences(
     listing_id: UUID,
     status: str | None = Query(default=None),
@@ -913,7 +986,11 @@ async def get_admin_occurrences(
             stmt = stmt.where(or_(*search_predicates))
             count_stmt = count_stmt.where(or_(*search_predicates))
 
-    stmt = stmt.order_by(Occurrence.start_time.asc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(Occurrence.start_time.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     total = int((await db.execute(count_stmt)).scalar_one() or 0)
     rows = (await db.execute(stmt)).all()
 
@@ -921,7 +998,9 @@ async def get_admin_occurrences(
     return _pagination_payload(items, page, page_size, total)
 
 
-@router.post("/listings/{listing_id}/occurrences", response_model=AdminOccurrenceCreateResponse)
+@router.post(
+    "/listings/{listing_id}/occurrences", response_model=AdminOccurrenceCreateResponse
+)
 async def create_admin_occurrences(
     listing_id: UUID,
     payload: OccurrenceCreateRequest,
@@ -932,10 +1011,14 @@ async def create_admin_occurrences(
     if not listing:
         raise_api_error(404, "NOT_FOUND", "Listing not found")
     if listing.status == ListingStatus.ARCHIVED:
-        raise_api_error(400, "INVALID_REQUEST", "Cannot create occurrences for archived listing")
+        raise_api_error(
+            400, "INVALID_REQUEST", "Cannot create occurrences for archived listing"
+        )
 
     listing_city = await db.get(City, listing.city_id)
-    allow_cross_city_venues = _is_nationwide_city_name(listing_city.name if listing_city else None)
+    allow_cross_city_venues = _is_nationwide_city_name(
+        listing_city.name if listing_city else None
+    )
 
     created: list[Occurrence] = []
     for entry in payload.occurrences:
@@ -981,11 +1064,16 @@ async def create_admin_occurrences(
 
     return {
         "message": f"{len(created)} occurrence created successfully",
-        "occurrences": [{"id": occurrence.id, "status": occurrence.status.value} for occurrence in created],
+        "occurrences": [
+            {"id": occurrence.id, "status": occurrence.status.value}
+            for occurrence in created
+        ],
     }
 
 
-@router.patch("/occurrences/{occurrence_id}", response_model=AdminOccurrenceUpdateResponse)
+@router.patch(
+    "/occurrences/{occurrence_id}", response_model=AdminOccurrenceUpdateResponse
+)
 async def update_admin_occurrence(
     occurrence_id: UUID,
     payload: OccurrenceUpdateRequest,
@@ -1001,10 +1089,20 @@ async def update_admin_occurrence(
         raise_api_error(404, "NOT_FOUND", "Listing not found")
 
     listing_city = await db.get(City, listing.city_id)
-    allow_cross_city_venues = _is_nationwide_city_name(listing_city.name if listing_city else None)
+    allow_cross_city_venues = _is_nationwide_city_name(
+        listing_city.name if listing_city else None
+    )
 
-    next_start = payload.start_time if "start_time" in payload.model_fields_set else occurrence.start_time
-    next_end = payload.end_time if "end_time" in payload.model_fields_set else occurrence.end_time
+    next_start = (
+        payload.start_time
+        if "start_time" in payload.model_fields_set
+        else occurrence.start_time
+    )
+    next_end = (
+        payload.end_time
+        if "end_time" in payload.model_fields_set
+        else occurrence.end_time
+    )
     if next_start is None:
         raise_api_error(
             422,
@@ -1042,24 +1140,36 @@ async def update_admin_occurrence(
                 {"fields": {"venue_id": "Venue does not belong to listing city"}},
             )
         occurrence.venue_id = next_venue.id
-        occurrence.city_id = next_venue.city_id if allow_cross_city_venues else listing.city_id
+        occurrence.city_id = (
+            next_venue.city_id if allow_cross_city_venues else listing.city_id
+        )
         venue = next_venue
         diff["venue_id"] = str(next_venue.id)
         diff["city_id"] = str(occurrence.city_id)
 
     if "provider_sub_location" in payload.model_fields_set:
-        occurrence.provider_sub_location = _normalize_optional_text(payload.provider_sub_location)
+        occurrence.provider_sub_location = _normalize_optional_text(
+            payload.provider_sub_location
+        )
         diff["provider_sub_location"] = occurrence.provider_sub_location
 
     if "capacity_total" in payload.model_fields_set:
         next_total = int(payload.capacity_total or 0)
-        used_capacity = max(0, int(occurrence.capacity_total or 0) - int(occurrence.capacity_remaining or 0))
+        used_capacity = max(
+            0,
+            int(occurrence.capacity_total or 0)
+            - int(occurrence.capacity_remaining or 0),
+        )
         if next_total < used_capacity:
             raise_api_error(
                 422,
                 "VALIDATION_ERROR",
                 "Some fields are invalid",
-                {"fields": {"capacity_total": "capacity_total cannot be less than currently used seats"}},
+                {
+                    "fields": {
+                        "capacity_total": "capacity_total cannot be less than currently used seats"
+                    }
+                },
             )
         occurrence.capacity_total = next_total
         occurrence.capacity_remaining = next_total - used_capacity
@@ -1080,7 +1190,11 @@ async def update_admin_occurrence(
                 422,
                 "VALIDATION_ERROR",
                 "Some fields are invalid",
-                {"fields": {"status": "Use the cancel endpoint to cancel an occurrence"}},
+                {
+                    "fields": {
+                        "status": "Use the cancel endpoint to cancel an occurrence"
+                    }
+                },
             )
         occurrence.status = payload.status
         diff["status"] = payload.status.value
@@ -1101,11 +1215,15 @@ async def update_admin_occurrence(
 
     return {
         "message": "Occurrence updated successfully",
-        "occurrence": _serialize_occurrence_row(occurrence, venue.name if venue else None),
+        "occurrence": _serialize_occurrence_row(
+            occurrence, venue.name if venue else None
+        ),
     }
 
 
-@router.patch("/occurrences/{occurrence_id}/cancel", response_model=AdminOccurrenceCancelResponse)
+@router.patch(
+    "/occurrences/{occurrence_id}/cancel", response_model=AdminOccurrenceCancelResponse
+)
 async def cancel_admin_occurrence(
     occurrence_id: UUID,
     payload: OccurrenceCancelRequest,
@@ -1122,13 +1240,17 @@ async def cancel_admin_occurrence(
     occurrence.capacity_remaining = occurrence.capacity_total
 
     affected_bookings = (
-        await db.execute(
-            select(Booking).where(
-                Booking.occurrence_id == occurrence.id,
-                Booking.status.in_([BookingStatus.HOLD, BookingStatus.CONFIRMED]),
+        (
+            await db.execute(
+                select(Booking).where(
+                    Booking.occurrence_id == occurrence.id,
+                    Booking.status.in_([BookingStatus.HOLD, BookingStatus.CONFIRMED]),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for booking in affected_bookings:
         booking.status = BookingStatus.CANCELLED
@@ -1208,9 +1330,15 @@ async def get_admin_bookings(
     if user:
         query = f"%{user.strip()}%"
         stmt = stmt.where(or_(User.name.ilike(query), User.email.ilike(query)))
-        count_stmt = count_stmt.where(or_(User.name.ilike(query), User.email.ilike(query)))
+        count_stmt = count_stmt.where(
+            or_(User.name.ilike(query), User.email.ilike(query))
+        )
 
-    stmt = stmt.order_by(Booking.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(Booking.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     total = int((await db.execute(count_stmt)).scalar_one() or 0)
     rows = (await db.execute(stmt)).all()
 
@@ -1264,8 +1392,12 @@ async def get_admin_offers(
             "description": row.description,
             "discount_type": row.discount_type.value,
             "discount_value": float(row.discount_value),
-            "min_order_value": float(row.min_order_value) if row.min_order_value is not None else None,
-            "max_discount_value": float(row.max_discount_value) if row.max_discount_value is not None else None,
+            "min_order_value": float(row.min_order_value)
+            if row.min_order_value is not None
+            else None,
+            "max_discount_value": float(row.max_discount_value)
+            if row.max_discount_value is not None
+            else None,
             "valid_from": row.valid_from,
             "valid_until": row.valid_until,
             "usage_limit": row.usage_limit,
@@ -1294,7 +1426,9 @@ async def create_admin_offer(
         )
 
     existing = (
-        await db.execute(select(Offer.id).where(func.lower(Offer.code) == code.lower()).limit(1))
+        await db.execute(
+            select(Offer.id).where(func.lower(Offer.code) == code.lower()).limit(1)
+        )
     ).scalar_one_or_none()
     if existing:
         raise_api_error(409, "DUPLICATE_CODE", "Offer code already exists")
@@ -1356,7 +1490,9 @@ async def update_admin_offer(
             )
         duplicate = (
             await db.execute(
-                select(Offer.id).where(func.lower(Offer.code) == code.lower(), Offer.id != offer.id).limit(1)
+                select(Offer.id)
+                .where(func.lower(Offer.code) == code.lower(), Offer.id != offer.id)
+                .limit(1)
             )
         ).scalar_one_or_none()
         if duplicate:
@@ -1423,7 +1559,9 @@ async def get_admin_audit_logs(
     _: object = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(AdminAuditLog, User.name).join(User, User.id == AdminAuditLog.admin_user_id, isouter=True)
+    stmt = select(AdminAuditLog, User.name).join(
+        User, User.id == AdminAuditLog.admin_user_id, isouter=True
+    )
     count_stmt = select(func.count(AdminAuditLog.id))
 
     if action:
@@ -1431,9 +1569,15 @@ async def get_admin_audit_logs(
         count_stmt = count_stmt.where(AdminAuditLog.action == action.strip().upper())
     if entity_type:
         stmt = stmt.where(AdminAuditLog.entity_type == entity_type.strip().upper())
-        count_stmt = count_stmt.where(AdminAuditLog.entity_type == entity_type.strip().upper())
+        count_stmt = count_stmt.where(
+            AdminAuditLog.entity_type == entity_type.strip().upper()
+        )
 
-    stmt = stmt.order_by(AdminAuditLog.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(AdminAuditLog.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     total = int((await db.execute(count_stmt)).scalar_one() or 0)
     rows = (await db.execute(stmt)).all()
     items = [
@@ -1467,7 +1611,9 @@ async def create_city(
         )
 
     duplicate = (
-        await db.execute(select(City.id).where(func.lower(City.name) == name.lower()).limit(1))
+        await db.execute(
+            select(City.id).where(func.lower(City.name) == name.lower()).limit(1)
+        )
     ).scalar_one_or_none()
     if duplicate:
         raise_api_error(409, "DUPLICATE_CITY", "City already exists")

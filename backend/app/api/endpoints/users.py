@@ -28,7 +28,12 @@ def _normalize_optional_text(value: str | None) -> str | None:
 async def _user_stats(db: AsyncSession, user_id) -> dict[str, Any]:
     now = datetime.now(UTC)
     total_bookings = int(
-        (await db.execute(select(func.count(Booking.id)).where(Booking.user_id == user_id))).scalar_one() or 0
+        (
+            await db.execute(
+                select(func.count(Booking.id)).where(Booking.user_id == user_id)
+            )
+        ).scalar_one()
+        or 0
     )
     upcoming_bookings = int(
         (
@@ -40,7 +45,10 @@ async def _user_stats(db: AsyncSession, user_id) -> dict[str, Any]:
                     Booking.status == BookingStatus.CONFIRMED,
                     or_(
                         Occurrence.end_time >= now,
-                        (Occurrence.end_time.is_(None) & (Occurrence.start_time >= now)),
+                        (
+                            Occurrence.end_time.is_(None)
+                            & (Occurrence.start_time >= now)
+                        ),
                     ),
                 )
             )
@@ -48,16 +56,13 @@ async def _user_stats(db: AsyncSession, user_id) -> dict[str, Any]:
         or 0
     )
     total_spent = (
-        (
-            await db.execute(
-                select(func.coalesce(func.sum(Booking.final_price), 0)).where(
-                    Booking.user_id == user_id,
-                    Booking.status == BookingStatus.CONFIRMED,
-                )
+        await db.execute(
+            select(func.coalesce(func.sum(Booking.final_price), 0)).where(
+                Booking.user_id == user_id,
+                Booking.status == BookingStatus.CONFIRMED,
             )
-        ).scalar_one()
-        or Decimal("0")
-    )
+        )
+    ).scalar_one() or Decimal("0")
 
     return {
         "total_bookings": total_bookings,
@@ -125,7 +130,9 @@ async def update_me(
         current_user.phone = cleaned_phone
 
     if payload.profile_image_url is not None:
-        current_user.profile_image_url = _normalize_optional_text(payload.profile_image_url)
+        current_user.profile_image_url = _normalize_optional_text(
+            payload.profile_image_url
+        )
 
     await db.commit()
     await db.refresh(current_user)

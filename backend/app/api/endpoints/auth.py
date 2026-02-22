@@ -38,7 +38,9 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
 
 
 @router.post("/register", response_model=AuthResponse)
-async def register(payload: RegisterRequest, response: Response, db: AsyncSession = Depends(get_db)):
+async def register(
+    payload: RegisterRequest, response: Response, db: AsyncSession = Depends(get_db)
+):
     data, refresh_token = await register_user(
         db,
         name=payload.name,
@@ -51,8 +53,12 @@ async def register(payload: RegisterRequest, response: Response, db: AsyncSessio
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
-    data, refresh_token = await login_user(db, email=payload.email, password=payload.password)
+async def login(
+    payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)
+):
+    data, refresh_token = await login_user(
+        db, email=payload.email, password=payload.password
+    )
     _set_refresh_cookie(response, refresh_token)
     return data
 
@@ -60,7 +66,9 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
 @router.post("/forgot-password", response_model=MessageResponse)
 async def forgot(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     await forgot_password(db, email=payload.email)
-    return {"message": "If an account with this email exists, a temporary password has been sent"}
+    return {
+        "message": "If an account with this email exists, a temporary password has been sent"
+    }
 
 
 @router.post("/change-password", response_model=MessageResponse)

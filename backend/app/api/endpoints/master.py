@@ -35,7 +35,9 @@ def _normalize_string_list(value: Any, *, uppercase: bool = False) -> list[str]:
     return normalized
 
 
-def _offer_matches_scope(offer: Offer, *, city_id: UUID | None, listing_type: ListingType | None) -> bool:
+def _offer_matches_scope(
+    offer: Offer, *, city_id: UUID | None, listing_type: ListingType | None
+) -> bool:
     applicability = offer.applicability if isinstance(offer.applicability, dict) else {}
 
     if city_id is not None:
@@ -44,7 +46,9 @@ def _offer_matches_scope(offer: Offer, *, city_id: UUID | None, listing_type: Li
             return False
 
     if listing_type is not None:
-        supported_types = _normalize_string_list(applicability.get("types"), uppercase=True)
+        supported_types = _normalize_string_list(
+            applicability.get("types"), uppercase=True
+        )
         if supported_types and listing_type.value.upper() not in supported_types:
             return False
 
@@ -66,15 +70,21 @@ def _serialize_offer_row(offer: Offer, *, now: datetime) -> dict[str, Any]:
         "description": offer.description,
         "discount_type": offer.discount_type.value,
         "discount_value": float(offer.discount_value),
-        "min_order_value": float(offer.min_order_value) if offer.min_order_value is not None else None,
-        "max_discount_value": float(offer.max_discount_value) if offer.max_discount_value is not None else None,
+        "min_order_value": float(offer.min_order_value)
+        if offer.min_order_value is not None
+        else None,
+        "max_discount_value": float(offer.max_discount_value)
+        if offer.max_discount_value is not None
+        else None,
         "valid_from": offer.valid_from,
         "valid_until": offer.valid_until,
         "usage_limit": offer.usage_limit,
         "user_usage_limit": offer.user_usage_limit,
         "is_active": offer.is_active,
         "is_current": is_current,
-        "applicability": offer.applicability if isinstance(offer.applicability, dict) else {},
+        "applicability": offer.applicability
+        if isinstance(offer.applicability, dict)
+        else {},
     }
 
 
@@ -85,7 +95,9 @@ async def get_cities(
     page_size: int = Query(default=50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    items, total = await list_cities(db, is_active=is_active, page=page, page_size=page_size)
+    items, total = await list_cities(
+        db, is_active=is_active, page=page, page_size=page_size
+    )
     return build_paginated_response(items, page=page, page_size=page_size, total=total)
 
 
@@ -158,11 +170,16 @@ async def get_offers(
     stmt = stmt.order_by(Offer.valid_until.asc().nulls_last(), Offer.created_at.desc())
     rows = (await db.execute(stmt)).scalars().all()
     filtered_rows = [
-        row for row in rows if _offer_matches_scope(row, city_id=city_id, listing_type=offer_type)
+        row
+        for row in rows
+        if _offer_matches_scope(row, city_id=city_id, listing_type=offer_type)
     ]
 
     total = len(filtered_rows)
     start = (page - 1) * page_size
-    items = [_serialize_offer_row(row, now=now) for row in filtered_rows[start : start + page_size]]
+    items = [
+        _serialize_offer_row(row, now=now)
+        for row in filtered_rows[start : start + page_size]
+    ]
 
     return build_paginated_response(items, page=page, page_size=page_size, total=total)
