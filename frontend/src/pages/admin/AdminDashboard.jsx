@@ -296,7 +296,7 @@ const AdminDashboard = () => {
                       className="relative h-44 w-44 rounded-full border border-slate-200 shadow-sm"
                       style={{ background: pieGradient }}
                     >
-                      <div className="absolute inset-6 rounded-full bg-white border border-slate-200 grid place-content-center text-center">
+                      <div className="absolute inset-6 rounded-full bg-card border border-slate-200 grid place-content-center text-center">
                         <p className="text-[11px] text-muted-foreground">Total</p>
                         <p className="text-sm font-semibold">{formatCurrency(chartTotalRevenue)}</p>
                       </div>

@@ -324,7 +324,7 @@ const ListingDetailsPage = () => {
 
       <div className="container mx-auto px-4 md:px-8 mt-8 grid lg:grid-cols-[1fr_340px] gap-8">
         <section className="space-y-6">
-          <div className="rounded-xl border p-4 bg-white">
+          <div className="rounded-xl border p-4 bg-card">
             <h2 className="font-semibold mb-3">About</h2>
             <p className="text-sm text-muted-foreground leading-relaxed">{listing.description}</p>
             <div className="mt-4 flex flex-wrap gap-4 text-sm text-muted-foreground">
@@ -340,7 +340,7 @@ const ListingDetailsPage = () => {
           </div>
 
           {metadataRows.length ? (
-            <div className="rounded-xl border p-4 bg-white">
+            <div className="rounded-xl border p-4 bg-card">
               <h2 className="font-semibold mb-3">Details</h2>
               <div className="grid md:grid-cols-2 gap-3 text-sm">
                 {metadataRows.map(([label, value]) => (
@@ -353,7 +353,7 @@ const ListingDetailsPage = () => {
             </div>
           ) : null}
 
-          <div className="rounded-xl border p-4 bg-white">
+          <div className="rounded-xl border p-4 bg-card">
             <h2 className="font-semibold mb-3">Location map</h2>
             {mapCoordinates ? (
               <VenueMap
@@ -370,11 +370,11 @@ const ListingDetailsPage = () => {
               <p className="text-sm text-muted-foreground">Map is unavailable for this listing.</p>
             ) : null}
           </div>
-          <div className="rounded-xl border p-4 bg-white">
+          <div className="rounded-xl border p-4 bg-card">
             <h2 className="font-semibold mb-2">Booking slot</h2>
             <p className="text-sm text-muted-foreground">
               {selectedOccurrence
-                ? `${formatDateTime(selectedOccurrence.start_time, listing.timezone)} - ${
+                ? `${formatDateTime(selectedOccurrence.start_time)} - ${
                     selectedOccurrence.venue_name || listing.venue?.name || listing.address
                   }`
                 : "No upcoming occurrence available"}
@@ -382,10 +382,10 @@ const ListingDetailsPage = () => {
           </div>
         </section>
 
-        <aside className="rounded-xl border p-4 bg-white h-fit lg:sticky lg:top-24">
+        <aside className="rounded-xl border p-4 bg-card h-fit lg:sticky lg:top-24">
           <h3 className="font-semibold">Book now</h3>
           <p className="text-sm text-muted-foreground mt-2">
-            {selectedOccurrence ? formatDateTime(selectedOccurrence.start_time, listing.timezone) : "No booking slot available"}
+            {selectedOccurrence ? formatDateTime(selectedOccurrence.start_time) : "No booking slot available"}
           </p>
           <p className="text-sm mt-1">Starting at {formatCurrency(listing.price_min, listing.currency)}</p>
           {listing.type !== LISTING_TYPE.MOVIE ? (
@@ -399,7 +399,7 @@ const ListingDetailsPage = () => {
                     id="ticket-tier"
                     value={selectedTicketOption?.key || ""}
                     onChange={(event) => setTicketType(event.target.value)}
-                    className="h-9 bg-white"
+                    size="sm"
                   >
                     {ticketOptions.map((option) => (
                       <option key={option.key} value={option.key}>
@@ -450,7 +450,13 @@ const ListingDetailsPage = () => {
             </p>
           ) : null}
           <Button className="w-full mt-4" onClick={onBook} disabled={!canBookListing || bookingLoading}>
-            {bookingLoading ? "Creating hold..." : listing.type === LISTING_TYPE.MOVIE ? "Book tickets" : "Continue"}
+            {bookingLoading
+              ? "Creating hold..."
+              : listing.type === LISTING_TYPE.MOVIE
+                ? "Book tickets"
+                : listing.type === LISTING_TYPE.RESTAURANT
+                  ? "Reserve a Table"
+                  : "Continue"}
           </Button>
         </aside>
       </div>

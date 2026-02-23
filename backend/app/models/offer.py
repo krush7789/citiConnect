@@ -19,8 +19,8 @@ class Offer(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     min_order_value = Column(Numeric(12, 2), nullable=True)
     max_discount_value = Column(Numeric(12, 2), nullable=True)
 
-    valid_from = Column(DateTime(timezone=True), nullable=True)
-    valid_until = Column(DateTime(timezone=True), nullable=True)
+    valid_from = Column(DateTime(), nullable=True)
+    valid_until = Column(DateTime(), nullable=True)
 
     usage_limit = Column(Integer, nullable=True)
     user_usage_limit = Column(Integer, nullable=True)
@@ -30,3 +30,5 @@ class Offer(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
 
     bookings = relationship("Booking", back_populates="applied_offer")
     usages = relationship("UserOfferUsage", back_populates="offer")
+
+

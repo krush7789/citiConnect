@@ -75,7 +75,6 @@ export const normalizeListingCard = (value = {}) => {
     city: toCityName(value.city) || value.city_name || "Gurugram",
     city_id: value.city_id || toCityId(value.city) || "",
     address: toAddress(value),
-    timezone: value.timezone || toMetadata(value).timezone || "Asia/Kolkata",
     cover_image_url: coverImageUrl,
     gallery_image_urls: galleryImageUrls,
     price_min: Number(value.price_min || 0),

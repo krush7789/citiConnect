@@ -3,6 +3,7 @@ import { CalendarDays, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { bookingService, listingService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
+import { BOOKING_STATUS } from "@/lib/enums";
 import { formatCurrency, formatDateTime } from "@/lib/format";
 
 const scopes = [
@@ -88,12 +89,14 @@ const BookingsPage = () => {
         <div className="space-y-3">
           {bookings.map((booking) => {
             const occurrence = occurrencesById[booking.occurrence_id];
+            const isCancelled = booking.status === BOOKING_STATUS.CANCELLED;
+            const cancellationReason = String(booking.cancellation_reason || "").trim();
             return (
               <button
                 key={booking.id}
                 type="button"
                 onClick={() => navigate(`/bookings/${booking.id}`)}
-                className="w-full text-left rounded-xl border bg-white p-4 hover:border-primary transition"
+                className="w-full text-left rounded-xl border bg-card p-4 hover:border-primary transition"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -106,11 +109,16 @@ const BookingsPage = () => {
                 <div className="mt-3 text-sm text-muted-foreground space-y-1">
                   <p className="inline-flex items-center gap-1">
                     <CalendarDays className="h-4 w-4" />
-                    {occurrence ? formatDateTime(occurrence.start_time, "Asia/Kolkata") : "--"}
+                    {occurrence ? formatDateTime(occurrence.start_time) : "--"}
                   </p>
                   <p>
-                    Qty: {booking.quantity} · Amount: {formatCurrency(booking.final_price, booking.currency)}
+                    Qty: {booking.quantity} | Amount: {formatCurrency(booking.final_price, booking.currency)}
                   </p>
+                  {isCancelled ? (
+                    <p className="text-xs font-medium text-rose-700 dark:text-rose-300">
+                      Cancellation reason: {cancellationReason || "Occurrence cancelled by admin."}
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="mt-3 inline-flex items-center gap-1 text-primary text-sm font-medium">

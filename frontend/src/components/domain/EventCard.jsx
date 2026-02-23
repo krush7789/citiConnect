@@ -13,7 +13,7 @@ const EventCard = ({ listing, onToggleWishlist, showDistance = false }) => {
   return (
     <article className="group">
       <Link to={`/listings/${listing.id}`} className="block">
-        <div className="rounded-2xl overflow-hidden border bg-white shadow-sm">
+        <div className="rounded-2xl overflow-hidden border bg-card text-card-foreground shadow-sm">
           <div className="relative aspect-[1/1.05] overflow-hidden">
             {coverImageUrl ? (
               <img
@@ -51,7 +51,9 @@ const EventCard = ({ listing, onToggleWishlist, showDistance = false }) => {
             type="button"
             onClick={() => onToggleWishlist(listing)}
             className={`h-8 px-3 rounded-full border text-xs inline-flex items-center gap-1 transition ${
-              listing.is_wishlisted ? "text-primary border-primary" : "text-muted-foreground hover:text-primary"
+              listing.is_wishlisted
+                ? "text-primary border-primary bg-primary/5"
+                : "text-muted-foreground border-input hover:text-foreground hover:border-foreground/30"
             }`}
             aria-label="Toggle wishlist"
           >

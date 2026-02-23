@@ -1,11 +1,9 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
-import { BookText, ClipboardList, LayoutDashboard, LogOut, MapPinned, Percent, Presentation } from "lucide-react";
+import { ArrowLeft, BookText, ClipboardList, LayoutDashboard, LogOut, MapPinned, Percent, Presentation } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
-import { USER_ROLE } from "@/lib/enums";
-import ForbiddenPage from "@/pages/public/ForbiddenPage";
 
 const navItems = [
   { name: "Dashboard", path: "/admin/dashboard", icon: LayoutDashboard },
@@ -19,7 +17,7 @@ const navItems = [
 const AdminLayout = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, isAuthenticated, requireAuth, logout } = useAuth();
+  const { logout } = useAuth();
 
   const renderNavItems = useMemo(() => {
     return navItems.map((item) => {
@@ -44,26 +42,6 @@ const AdminLayout = () => {
     });
   }, [location.pathname]);
 
-  useEffect(() => {
-    if (isAuthenticated) return;
-    requireAuth({ type: "navigate", path: location.pathname });
-  }, [isAuthenticated, location.pathname, requireAuth]);
-
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-muted/40 grid place-content-center p-6">
-        <div className="rounded-lg border bg-white p-6 text-center max-w-md">
-          <h1 className="text-xl font-semibold">Admin login required</h1>
-          <p className="text-sm text-muted-foreground mt-2">Sign in with an admin account to access this area.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (user?.role !== USER_ROLE.ADMIN) {
-    return <ForbiddenPage />;
-  }
-
   return (
     <div className="flex min-h-screen bg-muted/40">
       <aside className="fixed inset-y-0 left-0 z-20 w-64 bg-black text-white flex flex-col p-6">
@@ -78,7 +56,16 @@ const AdminLayout = () => {
 
         <Button
           variant="ghost"
-          className="flex justify-start gap-3 text-zinc-400 hover:text-white hover:bg-white/10 mt-auto pl-4"
+          className="flex justify-start gap-3 text-zinc-400 hover:text-white hover:bg-white/10 pl-4 mt-auto mb-1"
+          onClick={() => navigate("/")}
+        >
+          <ArrowLeft size={18} />
+          <span>Switch to User Side</span>
+        </Button>
+
+        <Button
+          variant="ghost"
+          className="flex justify-start gap-3 text-zinc-400 hover:text-white hover:bg-white/10 pl-4"
           onClick={async () => {
             await logout();
             navigate("/");

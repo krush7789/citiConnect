@@ -16,8 +16,12 @@ async def list_user_notifications(
     page: int,
     page_size: int,
 ) -> tuple[list[Notification], int]:
-    stmt: Select[tuple[Notification]] = select(Notification).where(Notification.user_id == user_id)
-    count_stmt = select(func.count(Notification.id)).where(Notification.user_id == user_id)
+    stmt: Select[tuple[Notification]] = select(Notification).where(
+        Notification.user_id == user_id
+    )
+    count_stmt = select(func.count(Notification.id)).where(
+        Notification.user_id == user_id
+    )
 
     if notification_type is not None:
         stmt = stmt.where(Notification.type == notification_type)
@@ -27,7 +31,11 @@ async def list_user_notifications(
         stmt = stmt.where(Notification.is_read == is_read)
         count_stmt = count_stmt.where(Notification.is_read == is_read)
 
-    stmt = stmt.order_by(Notification.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(Notification.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     total = int((await db.execute(count_stmt)).scalar_one() or 0)
     items = (await db.execute(stmt)).scalars().all()
     return items, total

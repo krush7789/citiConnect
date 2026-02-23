@@ -1,4 +1,14 @@
-from sqlalchemy import Boolean, Column, Enum, Float, ForeignKey, Index, Numeric, String, Text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import relationship
@@ -19,8 +29,12 @@ class Listing(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     title = Column(String(250), nullable=False, index=True)
     description = Column(Text, nullable=True)
 
-    city_id = Column(PGUUID(as_uuid=True), ForeignKey("cities.id"), nullable=False, index=True)
-    venue_id = Column(PGUUID(as_uuid=True), ForeignKey("venues.id"), nullable=False, index=True)
+    city_id = Column(
+        PGUUID(as_uuid=True), ForeignKey("cities.id"), nullable=False, index=True
+    )
+    venue_id = Column(
+        PGUUID(as_uuid=True), ForeignKey("venues.id"), nullable=False, index=True
+    )
 
     price_min = Column(Numeric(12, 2), nullable=True)
     price_max = Column(Numeric(12, 2), nullable=True)
@@ -43,7 +57,9 @@ class Listing(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         server_default=ListingStatus.DRAFT.value,
     )
 
-    created_by = Column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    created_by = Column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
 
     city = relationship("City", back_populates="listings")
     venue = relationship("Venue", back_populates="listings")

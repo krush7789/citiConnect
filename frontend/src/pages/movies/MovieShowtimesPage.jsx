@@ -87,7 +87,7 @@ const MovieShowtimesPage = () => {
 
       <section className="mt-6 space-y-3">
         {occurrences.length === 0 ? (
-          <div className="rounded-xl border bg-white p-5 text-sm text-muted-foreground">
+          <div className="rounded-xl border bg-card p-5 text-sm text-muted-foreground">
             No upcoming showtimes available for this movie.
           </div>
         ) : (
@@ -98,13 +98,13 @@ const MovieShowtimesPage = () => {
                 type="button"
                 key={occurrence.id}
                 onClick={() => setSelectedOccurrenceId(occurrence.id)}
-                className={`w-full text-left rounded-xl border bg-white p-4 transition ${
+                className={`w-full text-left rounded-xl border bg-card p-4 transition ${
                   active ? "border-primary bg-primary/5" : "hover:border-primary/40"
                 }`}
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="font-semibold">{formatDateTime(occurrence.start_time, listing.timezone)}</p>
+                    <p className="font-semibold">{formatDateTime(occurrence.start_time)}</p>
                     <p className="text-sm text-muted-foreground mt-1 inline-flex items-center gap-1">
                       <MapPin className="h-4 w-4" />
                       {occurrence.venue_name || listing.venue?.name || listing.address}
@@ -123,12 +123,12 @@ const MovieShowtimesPage = () => {
         )}
       </section>
 
-      <div className="fixed bottom-0 inset-x-0 border-t bg-white px-4 py-3">
+      <div className="fixed bottom-0 inset-x-0 border-t bg-card px-4 py-3">
         <div className="container mx-auto flex items-center justify-between gap-4">
           <div>
             <p className="text-xs text-muted-foreground">Selected showtime</p>
             <p className="text-sm font-medium">
-              {selectedOccurrence ? formatDateTime(selectedOccurrence.start_time, listing.timezone) : "None"}
+              {selectedOccurrence ? formatDateTime(selectedOccurrence.start_time) : "None"}
             </p>
           </div>
           <Button

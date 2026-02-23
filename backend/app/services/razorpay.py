@@ -68,9 +68,13 @@ def _normalize_notes(value: Any) -> dict[str, str]:
     return notes
 
 
-def _create_live_order_sync(*, amount_paise: int, currency: str, receipt: str, notes: dict[str, str]) -> dict[str, Any]:
+def _create_live_order_sync(
+    *, amount_paise: int, currency: str, receipt: str, notes: dict[str, str]
+) -> dict[str, Any]:
     key_id, key_secret = _ensure_live_credentials()
-    auth_token = base64.b64encode(f"{key_id}:{key_secret}".encode("utf-8")).decode("utf-8")
+    auth_token = base64.b64encode(f"{key_id}:{key_secret}".encode("utf-8")).decode(
+        "utf-8"
+    )
     payload = {
         "amount": int(amount_paise),
         "currency": currency,
@@ -146,7 +150,9 @@ async def create_razorpay_order(
 ) -> dict[str, Any]:
     safe_amount = int(amount_paise)
     if safe_amount <= 0:
-        raise_api_error(400, "VALIDATION_ERROR", "Payment amount must be greater than zero.")
+        raise_api_error(
+            400, "VALIDATION_ERROR", "Payment amount must be greater than zero."
+        )
 
     safe_currency = str(currency or "INR").strip().upper() or "INR"
     safe_notes = _normalize_notes(notes)

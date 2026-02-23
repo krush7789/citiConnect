@@ -14,7 +14,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/citi_connect")
+    database_url: str = Field(
+        default="postgresql+asyncpg://postgres:postgres@localhost:5432/citi_connect"
+    )
     jwt_secret: str = Field(default="change-me")
     jwt_algorithm: str = Field(default="HS256")
     access_token_expire_seconds: int = Field(default=3600)
@@ -24,7 +26,9 @@ class Settings(BaseSettings):
     enable_scheduler: bool = Field(default=True)
 
     geocoding_provider: str = Field(default="nominatim")
-    geocoding_base_url: str = Field(default="https://nominatim.openstreetmap.org/search")
+    geocoding_base_url: str = Field(
+        default="https://nominatim.openstreetmap.org/search"
+    )
     geocoding_api_key: str | None = Field(default=None)
 
     map_provider: str = Field(default="openstreetmap")
@@ -42,7 +46,10 @@ class Settings(BaseSettings):
     smtp_username: str | None = Field(default=None)
     smtp_password: str | None = Field(default=None)
     smtp_from_email: str = Field(default="no-reply@citiconnect.local")
+    smtp_from_name: str = Field(default="CitiConnect")
     smtp_use_tls: bool = Field(default=True)
+    smtp_use_ssl: bool = Field(default=False)
+    smtp_timeout_seconds: int = Field(default=20)
 
     razorpay_key_id: str | None = Field(default="rzp_test_dummy_key")
     razorpay_key_secret: str | None = Field(default="dummy_secret")
@@ -52,13 +59,20 @@ class Settings(BaseSettings):
 
     @property
     def normalized_database_url(self) -> str:
-        if self.database_url.startswith("postgresql://") and "+asyncpg" not in self.database_url:
-            return self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if (
+            self.database_url.startswith("postgresql://")
+            and "+asyncpg" not in self.database_url
+        ):
+            return self.database_url.replace(
+                "postgresql://", "postgresql+asyncpg://", 1
+            )
         return self.database_url
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        return [
+            origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
+        ]
 
 
 @lru_cache

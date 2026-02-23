@@ -9,12 +9,12 @@ from app.models.enums import VenueType
 
 class Venue(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "venues"
-    __table_args__ = (
-        Index("ix_venues_city_active", "city_id", "is_active"),
-    )
+    __table_args__ = (Index("ix_venues_city_active", "city_id", "is_active"),)
 
     name = Column(String(180), nullable=False)
-    city_id = Column(PGUUID(as_uuid=True), ForeignKey("cities.id"), nullable=False, index=True)
+    city_id = Column(
+        PGUUID(as_uuid=True), ForeignKey("cities.id"), nullable=False, index=True
+    )
     address = Column(String(400), nullable=True)
     venue_type = Column(Enum(VenueType, name="venue_type"), nullable=False)
     latitude = Column(Float, nullable=True)

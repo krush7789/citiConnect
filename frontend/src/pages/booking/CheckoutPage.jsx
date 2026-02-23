@@ -73,7 +73,7 @@ const CheckoutPage = () => {
     const details = error?.normalized?.details || {};
 
     if (code === "BOOKING_EXPIRED" && details.hold_expires_at) {
-      return `Booking hold expired at ${formatDateTime(details.hold_expires_at, "Asia/Kolkata")}. Recreate booking from listing page.`;
+      return `Booking hold expired at ${formatDateTime(details.hold_expires_at)}. Recreate booking from listing page.`;
     }
 
     if (code === "OFFER_NOT_APPLICABLE") {
@@ -381,16 +381,40 @@ const CheckoutPage = () => {
     );
   }
 
+  if (booking.status === BOOKING_STATUS.CANCELLED) {
+    const cancellationReason = String(booking.cancellation_reason || "").trim();
+    return (
+      <div className="container mx-auto px-4 md:px-8 py-14 max-w-xl">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center dark:border-rose-500/40 dark:bg-rose-950/25">
+          <h1 className="text-2xl font-black text-rose-700 dark:text-rose-200">Booking cancelled</h1>
+          <p className="text-sm text-rose-700/90 dark:text-rose-200/90 mt-2">
+            This occurrence was cancelled and payment cannot be completed.
+          </p>
+          <div className="mt-5 rounded-lg border border-rose-200/80 bg-white/65 p-4 text-left text-sm text-rose-800 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-200">
+            <p className="font-medium">Cancellation reason</p>
+            <p className="mt-1">{cancellationReason || "Occurrence cancelled by admin."}</p>
+          </div>
+          <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+            <Button onClick={() => navigate(`/bookings/${booking.id}`)}>View booking detail</Button>
+            <Button variant="outline" onClick={() => navigate("/bookings")}>
+              Back to bookings
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (booking.status === BOOKING_STATUS.CONFIRMED) {
     return (
       <div className="container mx-auto px-4 md:px-8 py-14 max-w-xl">
-        <div className="rounded-2xl border bg-white p-8 text-center">
+        <div className="rounded-2xl border bg-card p-8 text-center">
           <CheckCircle2 className="h-16 w-16 text-emerald-600 mx-auto" />
           <h1 className="text-2xl font-black mt-4">Booking confirmed</h1>
           <p className="text-sm text-muted-foreground mt-2">Payment reference: {booking.payment_ref}</p>
           <div className="mt-5 rounded-lg border p-4 text-left text-sm space-y-1">
             <p className="font-medium">{booking.listing_snapshot?.title}</p>
-            <p className="text-muted-foreground">{occurrence ? formatDateTime(occurrence.start_time, "Asia/Kolkata") : "--"}</p>
+            <p className="text-muted-foreground">{occurrence ? formatDateTime(occurrence.start_time) : "--"}</p>
             <p className="text-muted-foreground">
               Seats: {booking.booked_seats?.length ? booking.booked_seats.join(", ") : booking.quantity}
             </p>
@@ -421,11 +445,11 @@ const CheckoutPage = () => {
         </div>
       </div>
 
-      <div className="rounded-xl border bg-white p-5 space-y-5">
+      <div className="rounded-xl border bg-card p-5 space-y-5">
         <div>
           <h2 className="text-lg font-semibold">{booking.listing_snapshot?.title}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {occurrence ? formatDateTime(occurrence.start_time, "Asia/Kolkata") : "--"}
+            {occurrence ? formatDateTime(occurrence.start_time) : "--"}
           </p>
           <p className="text-sm text-muted-foreground mt-1">
             {booking.booked_seats?.length ? `Seats: ${booking.booked_seats.join(", ")}` : `Tickets: ${booking.quantity}`}
@@ -459,7 +483,7 @@ const CheckoutPage = () => {
           Choose an offer in the payment window. Only offers matching this booking category will be shown.
         </div>
 
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 inline-flex items-center gap-2">
+        <div className="rounded-lg border border-primary/30 bg-primary/10 p-3 text-sm text-primary inline-flex items-center gap-2">
           <Ticket className="h-4 w-4" />
           {isHoldExpired ? "Your hold has expired. Recreate booking from listing page." : "This booking is in HOLD until payment is confirmed."}
         </div>

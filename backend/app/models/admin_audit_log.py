@@ -10,7 +10,9 @@ from app.models.base import CreatedAtMixin, UUIDPrimaryKeyMixin
 class AdminAuditLog(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "admin_audit_logs"
 
-    admin_user_id = Column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    admin_user_id = Column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
     action = Column(String(100), nullable=False)
     entity_type = Column(String(100), nullable=False)
     entity_id = Column(String(100), nullable=False)

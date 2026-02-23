@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import Booking
 from app.models.city import City
-from app.models.enums import BookingStatus, ListingStatus, ListingType, OccurrenceStatus, SeatLockStatus
+from app.models.enums import (
+    BookingStatus,
+    ListingStatus,
+    ListingType,
+    OccurrenceStatus,
+    SeatLockStatus,
+)
 from app.models.listing import Listing
 from app.models.occurrence import Occurrence
 from app.models.seat_lock import SeatLock
@@ -20,10 +26,16 @@ NATIONWIDE_CITY_ALIASES = ("all india", "nationwide", "pan india", "pan-india")
 
 async def _get_nationwide_city_ids(db: AsyncSession) -> list[UUID]:
     rows = (
-        await db.execute(
-            select(City.id).where(func.lower(City.name).in_(NATIONWIDE_CITY_ALIASES))
+        (
+            await db.execute(
+                select(City.id).where(
+                    func.lower(City.name).in_(NATIONWIDE_CITY_ALIASES)
+                )
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return list(rows)
 
 
@@ -44,9 +56,13 @@ def _apply_city_scope_filter(
         Occurrence.status == OccurrenceStatus.SCHEDULED,
     )
     if date_from:
-        city_occurrence_exists = city_occurrence_exists.where(Occurrence.start_time >= date_from)
+        city_occurrence_exists = city_occurrence_exists.where(
+            Occurrence.start_time >= date_from
+        )
     if date_to:
-        city_occurrence_exists = city_occurrence_exists.where(Occurrence.start_time <= date_to)
+        city_occurrence_exists = city_occurrence_exists.where(
+            Occurrence.start_time <= date_to
+        )
 
     return stmt.where(
         or_(
@@ -133,7 +149,7 @@ async def list_listings(
 ):
     nationwide_city_ids = await _get_nationwide_city_ids(db) if city_id else []
 
-    now = datetime.now(UTC)
+    now = datetime.now()
     next_occurrence_subq = (
         select(
             Occurrence.listing_id.label("listing_id"),
@@ -153,12 +169,16 @@ async def list_listings(
     is_wishlisted_expr = literal(False)
     if user_id:
         is_wishlisted_expr = exists(
-            select(Wishlist.id).where(Wishlist.listing_id == Listing.id, Wishlist.user_id == user_id)
+            select(Wishlist.id).where(
+                Wishlist.listing_id == Listing.id, Wishlist.user_id == user_id
+            )
         )
 
     distance_expr = None
     if user_lat is not None and user_lon is not None:
-        distance_expr = haversine_sql_expression(Venue.latitude, Venue.longitude, user_lat, user_lon).label("distance_km")
+        distance_expr = haversine_sql_expression(
+            Venue.latitude, Venue.longitude, user_lat, user_lon
+        ).label("distance_km")
 
     columns = [
         Listing,
@@ -174,7 +194,9 @@ async def list_listings(
         select(*columns)
         .join(City, City.id == Listing.city_id)
         .join(Venue, Venue.id == Listing.venue_id)
-        .outerjoin(next_occurrence_subq, next_occurrence_subq.c.listing_id == Listing.id)
+        .outerjoin(
+            next_occurrence_subq, next_occurrence_subq.c.listing_id == Listing.id
+        )
     )
 
     count_stmt = select(func.count(Listing.id))
@@ -209,25 +231,39 @@ async def list_listings(
     if distance_expr is not None:
         count_stmt = count_stmt.join(Venue, Venue.id == Listing.venue_id)
         stmt = stmt.where(Venue.latitude.is_not(None), Venue.longitude.is_not(None))
-        count_stmt = count_stmt.where(Venue.latitude.is_not(None), Venue.longitude.is_not(None))
+        count_stmt = count_stmt.where(
+            Venue.latitude.is_not(None), Venue.longitude.is_not(None)
+        )
         if radius_km is not None:
             stmt = stmt.where(distance_expr <= radius_km)
             count_stmt = count_stmt.where(
-                haversine_sql_expression(Venue.latitude, Venue.longitude, user_lat, user_lon) <= radius_km
+                haversine_sql_expression(
+                    Venue.latitude, Venue.longitude, user_lat, user_lon
+                )
+                <= radius_km
             )
 
     if sort == "newest":
         stmt = stmt.order_by(Listing.created_at.desc())
     elif sort == "price_asc":
-        stmt = stmt.order_by(Listing.price_min.asc().nulls_last(), Listing.created_at.desc())
+        stmt = stmt.order_by(
+            Listing.price_min.asc().nulls_last(), Listing.created_at.desc()
+        )
     elif sort == "price_desc":
-        stmt = stmt.order_by(Listing.price_min.desc().nulls_last(), Listing.created_at.desc())
+        stmt = stmt.order_by(
+            Listing.price_min.desc().nulls_last(), Listing.created_at.desc()
+        )
     elif sort == "date":
-        stmt = stmt.order_by(next_occurrence_subq.c.next_start_time.asc().nulls_last(), Listing.created_at.desc())
+        stmt = stmt.order_by(
+            next_occurrence_subq.c.next_start_time.asc().nulls_last(),
+            Listing.created_at.desc(),
+        )
     elif sort == "popularity":
         stmt = stmt.order_by(Listing.popularity_score.desc(), Listing.created_at.desc())
     elif sort == "distance" and distance_expr is not None:
-        stmt = stmt.order_by(distance_expr.asc().nulls_last(), Listing.created_at.desc())
+        stmt = stmt.order_by(
+            distance_expr.asc().nulls_last(), Listing.created_at.desc()
+        )
     elif sort == "relevance":
         stmt = stmt.order_by(Listing.popularity_score.desc(), Listing.created_at.desc())
     else:
@@ -246,7 +282,7 @@ async def get_next_occurrences_for_listing_ids(
     if not listing_ids:
         return {}
 
-    now = datetime.now(UTC)
+    now = datetime.now()
 
     stmt = (
         select(Occurrence)
@@ -299,7 +335,9 @@ async def list_occurrences_for_listing(
     return (await db.execute(stmt)).scalars().all()
 
 
-async def get_occurrence_by_id(db: AsyncSession, occurrence_id: UUID) -> Occurrence | None:
+async def get_occurrence_by_id(
+    db: AsyncSession, occurrence_id: UUID
+) -> Occurrence | None:
     return await db.get(Occurrence, occurrence_id)
 
 
@@ -323,7 +361,7 @@ async def get_active_seat_locks(
     occurrence_id: UUID,
     now: datetime | None = None,
 ) -> dict[str, SeatLock]:
-    reference = now or datetime.now(UTC)
+    reference = now or datetime.now()
     stmt = select(SeatLock).where(
         SeatLock.occurrence_id == occurrence_id,
         SeatLock.status == SeatLockStatus.ACTIVE,
@@ -339,9 +377,9 @@ async def get_filters_metadata(
     city_id: UUID | None,
     types: list[ListingType] | None,
 ) -> dict:
-    stmt = select(Listing.category, Listing.vibe_tags, Listing.price_min, Listing.price_max).where(
-        Listing.status == ListingStatus.PUBLISHED
-    )
+    stmt = select(
+        Listing.category, Listing.vibe_tags, Listing.price_min, Listing.price_max
+    ).where(Listing.status == ListingStatus.PUBLISHED)
 
     if city_id:
         nationwide_city_ids = await _get_nationwide_city_ids(db)
@@ -381,3 +419,4 @@ async def get_filters_metadata(
             "max": float(max_price or 0),
         },
     }
+

@@ -1,8 +1,10 @@
 import React from "react";
-import { Bell, Heart, LogOut, Lock, Ticket, User } from "lucide-react";
+import { Bell, Heart, LogOut, Lock, MoonStar, Sun, Ticket, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
+import { useTheme } from "@/context/ThemeContext";
+import { cn } from "@/lib/utils";
 
 const menuItems = [
   { label: "My Bookings", icon: Ticket, path: "/bookings" },
@@ -14,6 +16,7 @@ const menuItems = [
 const ProfileDrawer = ({ onClose }) => {
   const navigate = useNavigate();
   const { user, logout, switchAuthModal } = useAuth();
+  const { isDarkMode, toggleDarkMode } = useTheme();
 
   const onNavigate = (path) => {
     navigate(path);
@@ -21,7 +24,7 @@ const ProfileDrawer = ({ onClose }) => {
   };
 
   return (
-    <div className="h-full bg-white flex flex-col">
+    <div className="h-full bg-card text-card-foreground flex flex-col">
       <div className="border-b px-5 py-4">
         <h2 className="font-bold text-lg">Profile</h2>
       </div>
@@ -64,6 +67,35 @@ const ProfileDrawer = ({ onClose }) => {
         >
           <Lock className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium">Change Password</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={toggleDarkMode}
+          aria-pressed={isDarkMode}
+          className="w-full text-left px-3 py-2.5 rounded-lg border hover:bg-muted/60 transition flex items-center justify-between gap-3"
+        >
+          <div className="inline-flex items-center gap-2">
+            {isDarkMode ? (
+              <MoonStar className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <Sun className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span className="text-sm font-medium">Dark Mode</span>
+          </div>
+          <span
+            className={cn(
+              "relative inline-flex h-6 w-11 items-center rounded-full border border-input transition-colors",
+              isDarkMode ? "bg-primary/90" : "bg-muted"
+            )}
+          >
+            <span
+              className={cn(
+                "h-5 w-5 rounded-full bg-white shadow transition-transform",
+                isDarkMode ? "translate-x-5" : "translate-x-0.5"
+              )}
+            />
+          </span>
         </button>
       </div>
 

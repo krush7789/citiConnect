@@ -1,3 +1,4 @@
+import logging
 import re
 import secrets
 import string
@@ -7,11 +8,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import raise_api_error
-from app.core.security import create_access_token, create_refresh_token, decode_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 from app.models.user import User
 from app.repository.auth import create_user, get_user_by_email, get_user_by_id
+from app.services.email import send_forgot_password_email
 
 PASSWORD_POLICY = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$")
+logger = logging.getLogger(__name__)
 
 
 def ensure_password_policy(password: str) -> None:
@@ -68,9 +77,15 @@ async def register_user(
     if existing:
         raise_api_error(409, "EMAIL_ALREADY_EXISTS", "Email is already registered")
 
-    user = await create_user(db, name=name, email=email, password_hash=hash_password(password))
-    access_token = create_access_token(_token_payload(user), settings.access_token_expire_seconds)
-    refresh_token = create_refresh_token({"sub": str(user.id)}, settings.refresh_token_expire_seconds)
+    user = await create_user(
+        db, name=name, email=email, password_hash=hash_password(password)
+    )
+    access_token = create_access_token(
+        _token_payload(user), settings.access_token_expire_seconds
+    )
+    refresh_token = create_refresh_token(
+        {"sub": str(user.id)}, settings.refresh_token_expire_seconds
+    )
 
     await db.commit()
 
@@ -85,7 +100,9 @@ async def register_user(
     )
 
 
-async def login_user(db: AsyncSession, *, email: str, password: str) -> tuple[dict, str]:
+async def login_user(
+    db: AsyncSession, *, email: str, password: str
+) -> tuple[dict, str]:
     user = await get_user_by_email(db, email)
     if not user or not verify_password(password, user.password_hash):
         raise_api_error(401, "INVALID_CREDENTIALS", "Email or password is incorrect")
@@ -93,8 +110,12 @@ async def login_user(db: AsyncSession, *, email: str, password: str) -> tuple[di
     if not user.is_active:
         raise_api_error(403, "USER_INACTIVE", "User account is inactive")
 
-    access_token = create_access_token(_token_payload(user), settings.access_token_expire_seconds)
-    refresh_token = create_refresh_token({"sub": str(user.id)}, settings.refresh_token_expire_seconds)
+    access_token = create_access_token(
+        _token_payload(user), settings.access_token_expire_seconds
+    )
+    refresh_token = create_refresh_token(
+        {"sub": str(user.id)}, settings.refresh_token_expire_seconds
+    )
 
     return (
         {
@@ -112,11 +133,37 @@ async def forgot_password(db: AsyncSession, *, email: str) -> None:
     if not user:
         return
 
+    previous_hash = user.password_hash
+    previous_temporary_flag = bool(user.is_temporary_password)
     alphabet = string.ascii_letters + string.digits + "@#$%!"
     temporary_password = "".join(secrets.choice(alphabet) for _ in range(12))
     user.password_hash = hash_password(temporary_password)
     user.is_temporary_password = True
     await db.commit()
+
+    sent = await send_forgot_password_email(
+        to_email=user.email,
+        recipient_name=user.name,
+        temporary_password=temporary_password,
+        fail_silently=True,
+    )
+    if sent:
+        return
+
+    logger.warning(
+        "Forgot-password email delivery failed for user_id=%s; reverting temporary password update.",
+        user.id,
+    )
+    user.password_hash = previous_hash
+    user.is_temporary_password = previous_temporary_flag
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "Failed to revert temporary password for user_id=%s after email failure.",
+            user.id,
+        )
 
 
 async def change_password(
@@ -174,7 +221,9 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> dict:
     if not user or not user.is_active:
         raise_api_error(401, "UNAUTHORIZED", "User not found or inactive")
 
-    access_token = create_access_token(_token_payload(user), settings.access_token_expire_seconds)
+    access_token = create_access_token(
+        _token_payload(user), settings.access_token_expire_seconds
+    )
     return {
         "access_token": access_token,
         "token_type": "bearer",

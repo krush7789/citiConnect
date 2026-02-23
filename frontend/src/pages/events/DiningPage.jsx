@@ -1,15 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Search, SlidersHorizontal } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import EventCard from "@/components/domain/EventCard";
 import SortFilterModal from "@/components/common/SortFilterModal";
-import PaginationControls from "@/components/common/PaginationControls";
-import { listingService } from "@/api/services";
+import useListings from "@/hooks/useListings";
 import useSelectedCity from "@/hooks/useSelectedCity";
 import useUserLocation from "@/hooks/useUserLocation";
 import useWishlistToggle from "@/hooks/useWishlistToggle";
-
 const specials = [
   {
     title: "Signature packages",
@@ -57,48 +54,22 @@ const DiningPage = () => {
     setPage(1);
   }, [cityId]);
 
-  const listingsQuery = useQuery({
-    queryKey: [
-      "listings-feed",
-      "RESTAURANT",
-      cityId || "all",
-      query,
-      sort,
-      page,
-      userCoords?.latitude || null,
-      userCoords?.longitude || null,
-    ],
-    enabled: !(distanceSortEnabled && locationLoading),
-    queryFn: () => {
-      const effectiveSort = distanceSortEnabled && !userCoords ? "popularity" : sort;
-      const queryParams = {
-        city_id: cityId,
-        types: "RESTAURANT",
-        q: query || undefined,
-        sort: effectiveSort,
-        page,
-        page_size: 12,
-      };
-      if (distanceSortEnabled && userCoords) {
-        queryParams.user_lat = userCoords.latitude;
-        queryParams.user_lon = userCoords.longitude;
-      }
-      return listingService.getListings(queryParams);
-    },
+  const listingsQuery = useListings({
+    cityId,
+    types: "RESTAURANT",
+    query,
+    sort,
+    page,
+    pageSize: 12,
+    userCoords,
+    distanceSortEnabled,
+    locationLoading,
   });
 
   useEffect(() => {
     setRestaurants(listingsQuery.data?.items || []);
   }, [listingsQuery.data]);
 
-  const pageMeta = useMemo(
-    () => ({
-      page: listingsQuery.data?.page || page,
-      total_pages: listingsQuery.data?.total_pages || 1,
-      total: listingsQuery.data?.total || 0,
-    }),
-    [listingsQuery.data, page]
-  );
   const loading = listingsQuery.isLoading || (distanceSortEnabled && locationLoading);
 
   const topDeals = useMemo(() => restaurants.filter((item) => item.offer_text).slice(0, 2), [restaurants]);
@@ -114,16 +85,29 @@ const DiningPage = () => {
   }, [distanceSortEnabled, locationLoading, userCoords, locationError]);
 
   return (
-    <div className="min-h-screen bg-[#E8E3F6] pb-16">
+    <div className="relative min-h-screen overflow-x-clip bg-[#efedf8] pb-16 dark:bg-[radial-gradient(120%_120%_at_50%_-10%,rgba(109,40,217,0.35),rgba(17,24,39,1)_45%,rgba(3,7,18,1)_100%)]">
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute left-[11%] top-[43%] hidden text-4xl text-violet-500/70 md:block dark:text-violet-300/75"
+      >
+        *
+      </span>
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute right-[12%] top-[36%] hidden text-4xl text-violet-500/70 md:block dark:text-violet-300/75"
+      >
+        *
+      </span>
+
       <section className="pt-10 pb-16">
         <div className="container mx-auto px-4 md:px-8">
-          <div className="mx-auto max-w-5xl rounded-[34px] border border-[#c7b8eb] bg-[#DCD3F2] px-6 py-12 md:px-14 md:py-16 text-center">
-            <h1 className="mx-auto max-w-3xl text-4xl md:text-6xl font-black leading-tight tracking-tight text-[#101010]">
+          <div className="mx-auto max-w-5xl rounded-[34px] border border-violet-300/45 bg-[#ddd8ef] px-6 py-12 text-center shadow-[0_24px_70px_-58px_rgba(109,40,217,0.65)] md:px-14 md:py-16 dark:border-violet-400/20 dark:bg-gradient-to-br dark:from-slate-900 dark:via-violet-950/45 dark:to-fuchsia-950/35 dark:shadow-[0_45px_110px_-60px_rgba(91,33,182,0.95)]">
+            <h1 className="mx-auto max-w-3xl text-4xl font-black leading-tight tracking-tight text-slate-900 md:text-6xl dark:bg-gradient-to-r dark:from-violet-200 dark:via-fuchsia-300 dark:to-indigo-300 dark:bg-clip-text dark:text-transparent">
               Discover restaurants, explore menus, book tables - all in one place
             </h1>
 
             <div className="relative max-w-[560px] mx-auto mt-10">
-              <Search className="absolute left-5 top-1/2 -translate-y-1/2 h-7 w-7 text-[#7B4EF2]" />
+              <Search className="absolute left-5 top-1/2 h-7 w-7 -translate-y-1/2 text-violet-500 dark:text-violet-300" />
               <input
                 value={query}
                 onChange={(event) => {
@@ -131,7 +115,7 @@ const DiningPage = () => {
                   setQuery(event.target.value);
                 }}
                 placeholder="Search for a restaurant name"
-                className="w-full h-16 rounded-[28px] border border-[#CEC6E2] bg-white/95 pl-16 pr-5 text-2xl md:text-[34px] leading-none outline-none shadow-[0_8px_20px_-16px_rgba(0,0,0,0.6)]"
+                className="h-16 w-full rounded-[28px] border border-[#cbc8d8] bg-[#f4f3f7] pl-16 pr-5 text-2xl leading-none text-slate-900 shadow-sm placeholder:text-slate-500/85 focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/35 md:text-[34px] dark:border-violet-500/35 dark:bg-slate-900/80 dark:text-violet-100 dark:placeholder:text-violet-200/45 dark:focus-visible:border-violet-300 dark:focus-visible:ring-violet-500/35"
               />
             </div>
           </div>
@@ -139,19 +123,22 @@ const DiningPage = () => {
       </section>
 
       <section className="container mx-auto px-4 md:px-8">
-        <h2 className="text-center text-4xl md:text-5xl font-black text-[#171717]">Enjoy iconic District specials</h2>
-        <div className="mx-auto mt-3 h-1 w-64 rounded-full bg-gradient-to-r from-transparent via-[#7B4EF2] to-transparent" />
+        <h2 className="text-center text-4xl font-black text-slate-900 md:text-5xl dark:text-violet-200">Enjoy iconic District specials</h2>
+        <div className="mx-auto mt-3 h-1 w-64 -rotate-1 rounded-full bg-violet-500/90 dark:bg-violet-300" />
 
         <div className="grid md:grid-cols-3 gap-8 mt-12">
           {specials.map((item, index) => (
-            <article key={item.title} className="text-center">
-              <h3 className="text-4xl md:text-5xl font-black tracking-tight text-[#151515]">{item.title}</h3>
-              <p className="mt-3 text-lg md:text-xl text-[#4a4a4a]">{item.description}</p>
+            <article key={item.title} className="p-2 text-center dark:rounded-3xl dark:border dark:border-violet-400/20 dark:bg-slate-900/45 dark:shadow-[0_30px_85px_-62px_rgba(124,58,237,1)]">
+              <h3 className="text-4xl md:text-5xl font-black tracking-tight text-slate-900 dark:text-violet-100">{item.title}</h3>
+              <p className="mt-3 text-lg md:text-xl text-muted-foreground">{item.description}</p>
               <div
-                className={`mt-6 inline-block bg-white border border-[#d8d8d8] p-2 pb-6 shadow-[0_22px_38px_-28px_rgba(0,0,0,0.8)] ${index % 2 === 0 ? "-rotate-2" : "rotate-2"
-                  }`}
+                className={`relative mt-6 inline-block ${index % 2 === 0 ? "-rotate-4" : "rotate-4"}`}
               >
-                <img src={item.image} alt={item.title} className="h-52 w-52 object-cover" />
+                <span className="absolute -top-1 left-1/2 z-10 h-3 w-10 -translate-x-1/2 -rotate-6 bg-zinc-400/50 dark:bg-violet-200/20" />
+                <span className="absolute inset-0 translate-x-[5px] translate-y-[5px] bg-black/90" />
+                <div className="relative border-[5px] border-black bg-[#cdb5ea] p-2 pb-6 dark:border-violet-300 dark:bg-violet-950/70">
+                  <img src={item.image} alt={item.title} className="h-52 w-52 object-cover" />
+                </div>
               </div>
             </article>
           ))}
@@ -160,24 +147,31 @@ const DiningPage = () => {
 
       {topDeals.length ? (
         <section className="container mx-auto px-4 md:px-8 mt-16">
-          <h2 className="text-center text-4xl md:text-5xl font-black text-[#171717]">Grab great deals and unlock extra savings</h2>
+          <h2 className="text-center text-4xl md:text-5xl font-black text-slate-900 dark:text-violet-200">Grab great deals and unlock extra savings</h2>
+          <div className="mx-auto mt-3 h-1 w-72 -rotate-1 rounded-full bg-violet-500/90 dark:bg-violet-300" />
           <div className="grid md:grid-cols-2 gap-7 mt-8">
             {topDeals.map((listing, index) => {
               const listingImageUrl = getListingImageUrl(listing);
               return (
-                <article key={listing.id} className="rounded-2xl border border-[#d7d0eb] bg-[#f8f7fd] p-6 text-center">
-                  <h3 className="text-3xl md:text-4xl font-black text-[#151515]">{index === 0 ? "Up to 50% OFF" : "Buffets"}</h3>
-                  <p className="text-lg text-[#4a4a4a] mt-2">{listing.title}</p>
-                  <div className={`mt-5 inline-block bg-white border p-2 pb-5 shadow ${index % 2 === 0 ? "-rotate-2" : "rotate-2"}`}>
-                    {listingImageUrl ? (
-                      <img
-                        src={listingImageUrl}
-                        alt={listing.title}
-                        className="h-44 w-44 object-cover"
-                      />
-                    ) : (
-                      <div className="h-44 w-44 bg-gradient-to-br from-muted/70 via-muted/40 to-background" />
-                    )}
+                <article key={listing.id} className="grid items-center gap-5 rounded-2xl p-4 text-center md:grid-cols-[1fr_auto] md:text-left dark:border dark:border-violet-400/20 dark:bg-slate-900/35">
+                  <div>
+                    <h3 className="text-3xl md:text-4xl font-black text-slate-900 dark:text-violet-200">{index === 0 ? "Up to 50% OFF" : "Buffets"}</h3>
+                    <p className="text-lg text-muted-foreground mt-2">{listing.title}</p>
+                  </div>
+                  <div className={`relative inline-block justify-self-center md:justify-self-end ${index % 2 === 0 ? "-rotate-6" : "rotate-6"}`}>
+                    <span className="absolute -top-1 left-1/2 z-10 h-3 w-10 -translate-x-1/2 -rotate-6 bg-zinc-400/50 dark:bg-violet-200/20" />
+                    <span className="absolute inset-0 translate-x-[5px] translate-y-[5px] bg-black/90" />
+                    <div className="relative border-[5px] border-black bg-[#cdb5ea] p-2 pb-5 dark:border-violet-300 dark:bg-violet-950/70">
+                      {listingImageUrl ? (
+                        <img
+                          src={listingImageUrl}
+                          alt={listing.title}
+                          className="h-44 w-44 object-cover"
+                        />
+                      ) : (
+                        <div className="h-44 w-44 bg-gradient-to-br from-muted/70 via-muted/40 to-background" />
+                      )}
+                    </div>
                   </div>
                 </article>
               );
@@ -188,27 +182,27 @@ const DiningPage = () => {
 
       <section className="container mx-auto px-4 md:px-8 mt-16">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-2xl md:text-3xl font-black text-[#171717]">Dining near you</h2>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-violet-100">Dining near you</h2>
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => setIsFilterModalOpen(true)}
-              className="h-9 rounded-lg border px-3 text-xs font-medium inline-flex items-center gap-1.5 bg-white"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-violet-200/90 bg-violet-50/90 px-3 text-xs font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-900/35 dark:text-violet-200 dark:hover:bg-violet-900/55"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
               Filters
             </button>
             <button
               type="button"
-              className="text-sm text-[#6b3fe6] hover:underline"
+              className="text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300"
               onClick={() => navigate("/search?types=RESTAURANT")}
             >
               View all
             </button>
           </div>
         </div>
-        <p className="text-xs text-[#4a4a4a] mb-2">Sort by: {sortLabel}</p>
-        {distanceSortMessage ? <p className="text-xs text-[#4a4a4a] mb-4">{distanceSortMessage}</p> : null}
+        <p className="text-xs text-muted-foreground mb-2">Sort by: {sortLabel}</p>
+        {distanceSortMessage ? <p className="text-xs text-muted-foreground mb-4">{distanceSortMessage}</p> : null}
         <SortFilterModal
           open={isFilterModalOpen}
           onOpenChange={setIsFilterModalOpen}
@@ -221,9 +215,11 @@ const DiningPage = () => {
         />
 
         {loading ? (
-          <p className="text-sm text-muted-foreground">Loading restaurants...</p>
+          <div className="rounded-lg border border-violet-200/75 bg-violet-50/85 p-5 text-sm text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/25 dark:text-violet-200/85">
+            Loading restaurants...
+          </div>
         ) : restaurants.length === 0 ? (
-          <div className="rounded-lg border border-[#d7d0eb] bg-white/70 p-5 text-sm text-[#4a4a4a]">
+          <div className="rounded-lg border border-violet-200/75 bg-violet-50/85 p-5 text-sm text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/25 dark:text-violet-200/85">
             No restaurants found for your search.
           </div>
         ) : (
@@ -244,5 +240,3 @@ const DiningPage = () => {
 };
 
 export default DiningPage;
-
-

@@ -1,9 +1,7 @@
 import logging
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi_pagination import add_pagination
 import uvicorn
 
@@ -41,12 +39,6 @@ async def startup_event() -> None:
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
     shutdown_scheduler()
-
-
-@app.get("/")
-async def read_root():
-    return {"message": "CitiConnect backend is running"}
-
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

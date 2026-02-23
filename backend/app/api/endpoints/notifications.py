@@ -5,20 +5,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependency import get_current_user
-from app.core.errors import raise_api_error
 from app.models.enums import NotificationType
-from app.repository.notification import (
-    list_user_notifications,
-    mark_all_notifications_read,
-    mark_notification_read,
-)
 from app.schema.common import PaginatedResponse
 from app.schema.notification import (
     NotificationItem,
     NotificationMarkAllReadResponse,
     NotificationMarkReadResponse,
 )
-from app.utils.pagination import build_paginated_response
+from app.services.notifications import (
+    get_notifications_page,
+    mark_all_as_read,
+    mark_notification_as_read,
+)
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -32,15 +30,14 @@ async def get_notifications(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    items, total = await list_user_notifications(
+    return await get_notifications_page(
         db,
         user_id=current_user.id,
-        notification_type=type,
+        type=type,
         is_read=is_read,
         page=page,
         page_size=page_size,
     )
-    return build_paginated_response(items, page=page, page_size=page_size, total=total)
 
 
 @router.patch("/{notification_id}/read", response_model=NotificationMarkReadResponse)
@@ -49,19 +46,11 @@ async def mark_one_notification_read(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    notification = await mark_notification_read(
+    return await mark_notification_as_read(
         db,
         user_id=current_user.id,
         notification_id=notification_id,
     )
-    if notification is None:
-        raise_api_error(404, "NOT_FOUND", "Notification not found")
-
-    await db.commit()
-    return {
-        "message": "Notification marked as read",
-        "notification_id": notification.id,
-    }
 
 
 @router.patch("/read-all", response_model=NotificationMarkAllReadResponse)
@@ -69,9 +58,7 @@ async def mark_all_notifications_as_read(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    updated_count = await mark_all_notifications_read(db, user_id=current_user.id)
-    await db.commit()
-    return {
-        "message": "All notifications marked as read",
-        "updated_count": updated_count,
-    }
+    return await mark_all_as_read(
+        db,
+        user_id=current_user.id,
+    )

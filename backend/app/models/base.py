@@ -1,4 +1,3 @@
-from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import Column, DateTime, func
@@ -10,8 +9,17 @@ class UUIDPrimaryKeyMixin:
 
 
 class CreatedAtMixin:
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at = Column(
+        DateTime(), nullable=False, server_default=func.now()
+    )
 
 
 class TimestampMixin(CreatedAtMixin):
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        DateTime(),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+

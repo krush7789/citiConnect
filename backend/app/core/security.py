@@ -1,7 +1,7 @@
 import base64
 import hmac
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -41,8 +41,12 @@ def _sign(message: bytes) -> str:
 
 def _encode(payload: dict[str, Any]) -> str:
     header = {"alg": settings.jwt_algorithm, "typ": "JWT"}
-    header_b64 = _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
-    payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8"))
+    header_b64 = _b64url_encode(
+        json.dumps(header, separators=(",", ":")).encode("utf-8")
+    )
+    payload_b64 = _b64url_encode(
+        json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
+    )
     signature_b64 = _sign(f"{header_b64}.{payload_b64}".encode("utf-8"))
     return f"{header_b64}.{payload_b64}.{signature_b64}"
 
@@ -64,23 +68,31 @@ def _decode(token: str) -> dict[str, Any]:
     if exp is None:
         raise TokenDecodeError("Token missing expiration")
 
-    now_ts = int(datetime.now(UTC).timestamp())
+    now_ts = int(datetime.now().timestamp())
     if int(exp) < now_ts:
         raise TokenDecodeError("Token expired")
 
     return payload
 
 
-def create_access_token(payload: dict[str, Any], expires_in_seconds: int | None = None) -> str:
-    expires = datetime.now(UTC) + timedelta(seconds=expires_in_seconds or settings.access_token_expire_seconds)
+def create_access_token(
+    payload: dict[str, Any], expires_in_seconds: int | None = None
+) -> str:
+    expires = datetime.now() + timedelta(
+        seconds=expires_in_seconds or settings.access_token_expire_seconds
+    )
     data = payload.copy()
     data["exp"] = int(expires.timestamp())
     data["type"] = "access"
     return _encode(data)
 
 
-def create_refresh_token(payload: dict[str, Any], expires_in_seconds: int | None = None) -> str:
-    expires = datetime.now(UTC) + timedelta(seconds=expires_in_seconds or settings.refresh_token_expire_seconds)
+def create_refresh_token(
+    payload: dict[str, Any], expires_in_seconds: int | None = None
+) -> str:
+    expires = datetime.now() + timedelta(
+        seconds=expires_in_seconds or settings.refresh_token_expire_seconds
+    )
     data = payload.copy()
     data["exp"] = int(expires.timestamp())
     data["type"] = "refresh"
@@ -89,3 +101,4 @@ def create_refresh_token(payload: dict[str, Any], expires_in_seconds: int | None
 
 def decode_token(token: str) -> dict[str, Any]:
     return _decode(token)
+

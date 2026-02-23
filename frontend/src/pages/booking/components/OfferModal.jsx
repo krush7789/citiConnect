@@ -39,7 +39,7 @@ const OfferModal = ({
 }) => {
     return (
         <div className="fixed inset-0 z-[60] grid place-content-center bg-black/55 p-4">
-            <div className="w-full max-w-lg rounded-2xl border bg-white p-5 space-y-4">
+            <div className="w-full max-w-lg rounded-2xl border bg-card text-card-foreground p-5 space-y-4">
                 <div>
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Offer Selector</p>
                     <h2 className="text-xl font-bold mt-1">Choose an offer</h2>
@@ -71,7 +71,7 @@ const OfferModal = ({
                             return (
                                 <div
                                     key={offer.id}
-                                    className={`rounded-lg border p-3 space-y-2 ${isApplied ? "border-emerald-300 bg-emerald-50/60" : ""}`}
+                                    className={`rounded-lg border p-3 space-y-2 ${isApplied ? "border-emerald-400/60 bg-emerald-500/10" : ""}`}
                                 >
                                     <div className="flex items-start justify-between gap-2">
                                         <div>

@@ -18,7 +18,10 @@ async def _booking_units_for_listing(db: AsyncSession, listing_id: UUID) -> floa
     stmt = (
         select(func.coalesce(decayed, 0.0))
         .join(Occurrence, Occurrence.id == Booking.occurrence_id)
-        .where(Occurrence.listing_id == listing_id, Booking.status == BookingStatus.CONFIRMED)
+        .where(
+            Occurrence.listing_id == listing_id,
+            Booking.status == BookingStatus.CONFIRMED,
+        )
     )
     value = (await db.execute(stmt)).scalar_one()
     return float(value or 0.0)
@@ -43,7 +46,9 @@ async def recompute_popularity_for_listing(db: AsyncSession, listing_id: UUID) -
     return score
 
 
-async def recompute_popularity_by_occurrence(db: AsyncSession, occurrence_id: UUID) -> float | None:
+async def recompute_popularity_by_occurrence(
+    db: AsyncSession, occurrence_id: UUID
+) -> float | None:
     occurrence = await db.get(Occurrence, occurrence_id)
     if not occurrence:
         return None
@@ -57,7 +62,9 @@ async def recompute_popularity_for_all_listings(db: AsyncSession) -> int:
     return len(listing_ids)
 
 
-async def on_booking_state_change(db: AsyncSession, occurrence_id: UUID) -> float | None:
+async def on_booking_state_change(
+    db: AsyncSession, occurrence_id: UUID
+) -> float | None:
     return await recompute_popularity_by_occurrence(db, occurrence_id)
 
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Loader2, Mail, Phone, ShieldCheck, ShieldX, UserRound } from "lucide-react";
+import { Camera, Loader2, Mail, MoonStar, Phone, ShieldCheck, ShieldX, Sun, UserRound } from "lucide-react";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/context/AuthContext";
+import { useTheme } from "@/context/ThemeContext";
 import { mediaService, userService } from "@/api/services";
 
 const roleText = (role) => {
@@ -37,6 +38,7 @@ const emptyProfileValues = {
 
 const ProfilePage = () => {
   const { requireAuth, isAuthenticated, user, switchAuthModal } = useAuth();
+  const { isDarkMode, toggleDarkMode } = useTheme();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -334,28 +336,6 @@ const ProfilePage = () => {
                   </Button>
                 </div>
               </form>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Booking Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid sm:grid-cols-3 gap-3">
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Total bookings</p>
-                  <p className="text-xl font-bold">{user?.stats?.total_bookings || 0}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Upcoming</p>
-                  <p className="text-xl font-bold">{user?.stats?.upcoming_bookings || 0}</p>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Total spent</p>
-                  <p className="text-xl font-bold">Rs {user?.stats?.total_spent || 0}</p>
-                </div>
-              </div>
             </CardContent>
           </Card>
         </div>

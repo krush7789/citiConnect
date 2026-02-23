@@ -10,7 +10,9 @@ from app.models.enums import NotificationType
 class Notification(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
     __tablename__ = "notifications"
 
-    user_id = Column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
     title = Column(String(200), nullable=False)
     body = Column(String(1000), nullable=False)
     type = Column(Enum(NotificationType, name="notification_type"), nullable=False)

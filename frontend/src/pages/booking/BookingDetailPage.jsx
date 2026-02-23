@@ -72,10 +72,11 @@ const BookingDetailPage = () => {
       </div>
     );
   }
+  const cancellationReason = String(booking.cancellation_reason || "").trim();
 
   return (
     <div className="container mx-auto px-4 md:px-8 py-8 pb-16 max-w-3xl">
-      <div className="rounded-xl border bg-white p-5 md:p-6 space-y-5">
+      <div className="rounded-xl border bg-card p-5 md:p-6 space-y-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs text-muted-foreground">Booking ID</p>
@@ -88,7 +89,7 @@ const BookingDetailPage = () => {
         <div className="grid sm:grid-cols-2 gap-4 text-sm">
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Date & Time</p>
-            <p className="font-medium mt-1">{occurrence ? formatDateTime(occurrence.start_time, "Asia/Kolkata") : "--"}</p>
+            <p className="font-medium mt-1">{occurrence ? formatDateTime(occurrence.start_time) : "--"}</p>
           </div>
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Quantity</p>
@@ -106,7 +107,16 @@ const BookingDetailPage = () => {
 
         {booking.can_cancel ? (
           <div className="rounded-lg border p-3 text-sm text-muted-foreground">
-            Cancellation deadline: {booking.cancellation_deadline ? formatDateTime(booking.cancellation_deadline, "Asia/Kolkata") : "--"}
+            Cancellation deadline: {booking.cancellation_deadline ? formatDateTime(booking.cancellation_deadline) : "--"}
+          </div>
+        ) : null}
+
+        {booking.status === BOOKING_STATUS.CANCELLED ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/25 dark:text-rose-200">
+            <p className="font-semibold">This booking was cancelled.</p>
+            <p className="mt-1">
+              Cancellation reason: {cancellationReason || "Occurrence cancelled by admin."}
+            </p>
           </div>
         ) : null}
 

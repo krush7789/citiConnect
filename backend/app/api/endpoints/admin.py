@@ -1,7 +1,8 @@
+import asyncio
+import logging
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from enum import Enum
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -16,11 +17,9 @@ from app.models.booking import Booking
 from app.models.city import City
 from app.models.enums import (
     BookingStatus,
-    DiscountType,
     ListingStatus,
     ListingType,
     OccurrenceStatus,
-    VenueType,
 )
 from app.models.listing import Listing
 from app.models.occurrence import Occurrence
@@ -53,407 +52,34 @@ from app.schema.admin import (
     VenueCreateRequest,
 )
 from app.schema.common import MessageResponse, PaginatedResponse
+from app.services.admin import (
+    add_audit_log as _add_audit_log,
+    build_venue_geocode_query as _build_venue_geocode_query,
+    is_nationwide_city_name as _is_nationwide_city_name,
+    normalize_discount_type as _normalize_discount_type,
+    normalize_json_dict as _normalize_json_dict,
+    normalize_limit as _normalize_limit,
+    normalize_optional_text as _normalize_optional_text,
+    normalize_seat_layout as _normalize_seat_layout,
+    normalize_string_list as _normalize_string_list,
+    pagination_payload as _pagination_payload,
+    parse_booking_status as _parse_booking_status,
+    parse_listing_status as _parse_listing_status,
+    parse_listing_type as _parse_listing_type,
+    parse_occurrence_status as _parse_occurrence_status,
+    parse_uuid_or_none as _parse_uuid_or_none,
+    resolve_listing_city_and_venue as _resolve_listing_city_and_venue,
+    serialize_listing_detail as _serialize_listing_detail,
+    serialize_listing_row as _serialize_listing_row,
+    serialize_occurrence_row as _serialize_occurrence_row,
+    validate_occurrence_window as _validate_occurrence_window,
+    validate_price_range as _validate_price_range,
+)
+from app.services.email import send_occurrence_cancelled_email
 from app.services.geocoding import geocode_address
-from app.utils.pagination import build_paginated_response
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-NATIONWIDE_CITY_NAME = "All India"
-NATIONWIDE_CITY_STATE = "Nationwide"
-NATIONWIDE_VENUE_NAME = "Multiple Venues"
-NATIONWIDE_VENUE_ADDRESS = "Venue announced later"
-
-
-def _normalize_discount_type(raw: str) -> DiscountType:
-    candidate = raw.strip().upper()
-    if candidate == "PERCENTAGE":
-        candidate = "PERCENT"
-    try:
-        return DiscountType(candidate)
-    except ValueError:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"discount_type": "Invalid discount type"}},
-        )
-
-
-def _normalize_limit(value: int | None) -> int | None:
-    if value is None or value <= 0:
-        return None
-    return value
-
-
-EnumType = TypeVar("EnumType", bound=Enum)
-
-
-def _parse_enum_value(
-    value: str | None,
-    enum_cls: type[EnumType],
-    *,
-    field_name: str,
-    message: str,
-) -> EnumType | None:
-    if not value:
-        return None
-    try:
-        return enum_cls(value.strip().upper())
-    except ValueError:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {field_name: message}},
-        )
-
-
-def _parse_booking_status(value: str | None) -> BookingStatus | None:
-    return _parse_enum_value(
-        value,
-        BookingStatus,
-        field_name="status",
-        message="Invalid booking status",
-    )
-
-
-def _parse_listing_type(value: str | None) -> ListingType | None:
-    return _parse_enum_value(
-        value,
-        ListingType,
-        field_name="type",
-        message="Invalid listing type",
-    )
-
-
-def _parse_listing_status(value: str | None) -> ListingStatus | None:
-    return _parse_enum_value(
-        value,
-        ListingStatus,
-        field_name="status",
-        message="Invalid listing status",
-    )
-
-
-def _parse_occurrence_status(value: str | None) -> OccurrenceStatus | None:
-    return _parse_enum_value(
-        value,
-        OccurrenceStatus,
-        field_name="status",
-        message="Invalid occurrence status",
-    )
-
-
-def _parse_uuid_or_none(value: str | None) -> UUID | None:
-    if not value:
-        return None
-    try:
-        return UUID(value.strip())
-    except ValueError:
-        return None
-
-
-def _normalize_optional_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-    cleaned = value.strip()
-    return cleaned or None
-
-
-def _normalize_string_list(items: list[str] | None) -> list[str] | None:
-    if not items:
-        return None
-    cleaned = [item.strip() for item in items if isinstance(item, str) and item.strip()]
-    return cleaned or None
-
-
-def _normalize_json_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _normalize_seat_layout(value: Any) -> Any | None:
-    if isinstance(value, (dict, list)):
-        return value
-    return None
-
-
-def _build_venue_geocode_query(*, venue_name: str, address: str, city: City) -> str:
-    parts: list[str] = [venue_name.strip(), address.strip(), city.name.strip()]
-    if city.state:
-        parts.append(city.state.strip())
-    parts.append("India")
-    return ", ".join([part for part in parts if part])
-
-
-def _is_nationwide_city_name(value: str | None) -> bool:
-    cleaned = (value or "").strip().lower()
-    return cleaned in {"all india", "nationwide", "pan india", "pan-india"}
-
-
-async def _get_or_create_city(
-    db: AsyncSession,
-    *,
-    name: str,
-    state: str | None = None,
-) -> City:
-    existing = (
-        await db.execute(
-            select(City).where(func.lower(City.name) == name.strip().lower()).limit(1)
-        )
-    ).scalar_one_or_none()
-    if existing:
-        return existing
-
-    city = City(
-        name=name.strip(),
-        state=_normalize_optional_text(state),
-        is_active=True,
-    )
-    db.add(city)
-    await db.flush()
-    return city
-
-
-async def _get_or_create_city_placeholder_venue(
-    db: AsyncSession,
-    *,
-    city: City,
-    venue_name: str,
-    address: str | None = None,
-) -> Venue:
-    existing = (
-        await db.execute(
-            select(Venue)
-            .where(
-                Venue.city_id == city.id,
-                func.lower(Venue.name) == venue_name.strip().lower(),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if existing:
-        return existing
-
-    venue = Venue(
-        name=venue_name.strip(),
-        city_id=city.id,
-        address=_normalize_optional_text(address),
-        venue_type=VenueType.EVENT_SPACE,
-        is_active=True,
-    )
-    db.add(venue)
-    await db.flush()
-    return venue
-
-
-async def _resolve_listing_city_and_venue(
-    db: AsyncSession,
-    *,
-    city_id: UUID | None,
-    venue_id: UUID | None,
-) -> tuple[City, Venue]:
-    city = await db.get(City, city_id) if city_id else None
-    if city_id and not city:
-        raise_api_error(404, "NOT_FOUND", "City not found")
-
-    venue = await db.get(Venue, venue_id) if venue_id else None
-    if venue_id and not venue:
-        raise_api_error(404, "NOT_FOUND", "Venue not found")
-
-    if city and venue and venue.city_id != city.id:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"venue_id": "Venue does not belong to selected city"}},
-        )
-
-    if city is None and venue is not None:
-        city = await db.get(City, venue.city_id)
-        if city is None:
-            raise_api_error(404, "NOT_FOUND", "City not found")
-
-    if city is None:
-        city = await _get_or_create_city(
-            db,
-            name=NATIONWIDE_CITY_NAME,
-            state=NATIONWIDE_CITY_STATE,
-        )
-
-    if venue is None:
-        if _is_nationwide_city_name(city.name):
-            venue = await _get_or_create_city_placeholder_venue(
-                db,
-                city=city,
-                venue_name=NATIONWIDE_VENUE_NAME,
-                address=NATIONWIDE_VENUE_ADDRESS,
-            )
-        else:
-            venue = await _get_or_create_city_placeholder_venue(
-                db,
-                city=city,
-                venue_name=f"{city.name} - Multiple Venues",
-                address="Venue announced later",
-            )
-
-    return city, venue
-
-
-def _normalize_ticket_pricing(ticket_pricing: Any) -> dict[str, float] | None:
-    if isinstance(ticket_pricing, dict):
-        normalized = {}
-        for key, value in ticket_pricing.items():
-            key_text = str(key).strip().upper()
-            if not key_text or value is None:
-                continue
-            try:
-                normalized[key_text] = float(value)
-            except (TypeError, ValueError):
-                continue
-        return normalized or None
-    return None
-
-
-def _validate_price_range(price_min: Decimal | None, price_max: Decimal | None) -> None:
-    if price_min is not None and price_max is not None and price_min > price_max:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {
-                "fields": {
-                    "price_max": "price_max must be greater than or equal to price_min"
-                }
-            },
-        )
-
-
-def _validate_occurrence_window(
-    start_time: datetime, end_time: datetime | None
-) -> None:
-    if end_time is not None and start_time >= end_time:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"end_time": "end_time must be later than start_time"}},
-        )
-
-
-def _pagination_payload(
-    items: list[dict[str, Any]], page: int, page_size: int, total: int
-) -> dict[str, Any]:
-    return build_paginated_response(items, page=page, page_size=page_size, total=total)
-
-
-def _serialize_listing_row(
-    listing: Listing, city_name: str | None, total_bookings: int
-) -> dict[str, Any]:
-    display_city = (
-        "All India" if _is_nationwide_city_name(city_name) else (city_name or "Unknown")
-    )
-    return {
-        "id": listing.id,
-        "type": listing.type.value,
-        "title": listing.title,
-        "city": display_city,
-        "city_id": listing.city_id,
-        "status": listing.status.value,
-        "total_bookings": int(total_bookings),
-        "created_at": listing.created_at,
-        "offer_text": listing.offer_text or "",
-        "is_featured": bool(listing.is_featured),
-    }
-
-
-def _serialize_listing_detail(
-    listing: Listing,
-    city_name: str | None,
-    venue_name: str | None,
-    venue_address: str | None,
-) -> dict[str, Any]:
-    is_nationwide = _is_nationwide_city_name(city_name)
-    gallery_image_urls = (
-        listing.gallery_image_urls
-        if isinstance(listing.gallery_image_urls, list)
-        else []
-    )
-    cover_image_url = listing.cover_image_url or (
-        gallery_image_urls[0] if gallery_image_urls else None
-    )
-
-    return {
-        "id": listing.id,
-        "type": listing.type.value,
-        "title": listing.title,
-        "description": listing.description or "",
-        "city_id": None if is_nationwide else listing.city_id,
-        "city": "All India" if is_nationwide else (city_name or "Unknown"),
-        "venue_id": None if is_nationwide else listing.venue_id,
-        "venue_name": None if is_nationwide else venue_name,
-        "address": None if is_nationwide else venue_address,
-        "category": listing.category or "",
-        "price_min": float(listing.price_min)
-        if listing.price_min is not None
-        else None,
-        "price_max": float(listing.price_max)
-        if listing.price_max is not None
-        else None,
-        "currency": "INR",
-        "status": listing.status.value,
-        "is_featured": bool(listing.is_featured),
-        "offer_text": listing.offer_text or "",
-        "cover_image_url": cover_image_url,
-        "gallery_image_urls": gallery_image_urls,
-        "metadata": listing.metadata_json
-        if isinstance(listing.metadata_json, dict)
-        else {},
-        "vibe_tags": listing.vibe_tags if isinstance(listing.vibe_tags, list) else [],
-        "is_nationwide": is_nationwide,
-        "created_at": listing.created_at,
-        "updated_at": listing.updated_at,
-    }
-
-
-def _serialize_occurrence_row(
-    occurrence: Occurrence, venue_name: str | None
-) -> dict[str, Any]:
-    return {
-        "id": occurrence.id,
-        "listing_id": occurrence.listing_id,
-        "city_id": occurrence.city_id,
-        "venue_id": occurrence.venue_id,
-        "venue_name": venue_name,
-        "start_time": occurrence.start_time,
-        "end_time": occurrence.end_time,
-        "provider_sub_location": occurrence.provider_sub_location,
-        "capacity_total": int(occurrence.capacity_total or 0),
-        "capacity_remaining": int(occurrence.capacity_remaining or 0),
-        "ticket_pricing": _normalize_ticket_pricing(occurrence.ticket_pricing),
-        "seat_layout": _normalize_seat_layout(occurrence.seat_layout),
-        "status": occurrence.status.value,
-    }
-
-
-async def _add_audit_log(
-    db: AsyncSession,
-    *,
-    admin_user_id: UUID,
-    action: str,
-    entity_type: str,
-    entity_id: str,
-    diff: dict[str, Any] | None = None,
-) -> None:
-    db.add(
-        AdminAuditLog(
-            admin_user_id=admin_user_id,
-            action=action,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            diff=diff or {},
-        )
-    )
-
+logger = logging.getLogger(__name__)
 
 @router.get("/dashboard", response_model=AdminDashboardResponse)
 async def get_dashboard(
@@ -1234,28 +860,61 @@ async def cancel_admin_occurrence(
     if not occurrence:
         raise_api_error(404, "NOT_FOUND", "Occurrence not found")
 
+    listing = await db.get(Listing, occurrence.listing_id)
+    venue = await db.get(Venue, occurrence.venue_id)
     reason = _normalize_optional_text(payload.reason) or "Occurrence cancelled by admin"
     if occurrence.status != OccurrenceStatus.CANCELLED:
         occurrence.status = OccurrenceStatus.CANCELLED
     occurrence.capacity_remaining = occurrence.capacity_total
 
-    affected_bookings = (
+    affected_rows = (
         (
             await db.execute(
-                select(Booking).where(
+                select(Booking, User.name, User.email)
+                .join(User, User.id == Booking.user_id)
+                .where(
                     Booking.occurrence_id == occurrence.id,
                     Booking.status.in_([BookingStatus.HOLD, BookingStatus.CONFIRMED]),
                 )
             )
         )
-        .scalars()
         .all()
     )
 
-    for booking in affected_bookings:
+    email_payloads: list[dict[str, Any]] = []
+    for booking, user_name, user_email in affected_rows:
         booking.status = BookingStatus.CANCELLED
         booking.cancellation_reason = reason
         booking.hold_expires_at = None
+
+        if not user_email:
+            continue
+
+        listing_snapshot = (
+            booking.listing_snapshot if isinstance(booking.listing_snapshot, dict) else {}
+        )
+        email_payloads.append(
+            {
+                "to_email": str(user_email),
+                "recipient_name": str(user_name or ""),
+                "booking_id": booking.id,
+                "listing_title": str(
+                    listing_snapshot.get("title")
+                    or (listing.title if listing else "Your booking")
+                ),
+                "start_time": occurrence.start_time,
+                "venue_name": str(
+                    listing_snapshot.get("venue_name") or (venue.name if venue else "")
+                ),
+                "venue_address": str(
+                    listing_snapshot.get("address")
+                    or (venue.address if venue else "")
+                ),
+                "reason": reason,
+                "total_amount": booking.final_price or booking.total_price,
+                "currency": str(listing_snapshot.get("currency") or "INR"),
+            }
+        )
 
     await _add_audit_log(
         db,
@@ -1263,9 +922,37 @@ async def cancel_admin_occurrence(
         action="CANCEL_OCCURRENCE",
         entity_type="OCCURRENCE",
         entity_id=str(occurrence.id),
-        diff={"reason": reason, "cancelled_bookings": len(affected_bookings)},
+        diff={"reason": reason, "cancelled_bookings": len(affected_rows)},
     )
     await db.commit()
+
+    if email_payloads:
+        results = await asyncio.gather(
+            *(
+                send_occurrence_cancelled_email(
+                    to_email=payload["to_email"],
+                    recipient_name=payload["recipient_name"],
+                    booking_id=payload["booking_id"],
+                    listing_title=payload["listing_title"],
+                    start_time=payload["start_time"],
+                    venue_name=payload["venue_name"],
+                    venue_address=payload["venue_address"],
+                    reason=payload["reason"],
+                    total_amount=payload["total_amount"],
+                    currency=payload["currency"],
+                    fail_silently=True,
+                )
+                for payload in email_payloads
+            )
+        )
+        failed_count = len([result for result in results if not result])
+        if failed_count:
+            logger.warning(
+                "Occurrence cancellation email delivery failed for occurrence_id=%s (%s/%s failed).",
+                occurrence.id,
+                failed_count,
+                len(email_payloads),
+            )
 
     return {
         "message": "Occurrence cancelled. Related bookings cancelled.",

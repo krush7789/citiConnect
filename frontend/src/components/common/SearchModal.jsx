@@ -75,7 +75,7 @@ const SearchModal = ({ onClose }) => {
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-2xl border p-5 sm:p-6 space-y-4">
+    <div className="bg-card text-card-foreground rounded-2xl shadow-2xl border p-5 sm:p-6 space-y-4">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -97,7 +97,7 @@ const SearchModal = ({ onClose }) => {
           <Badge
             key={category.label}
             onClick={() => setActiveType(category.value)}
-            className={`cursor-pointer px-3 py-1 rounded-full border ${activeType === category.value ? "bg-primary text-primary-foreground" : "bg-white text-foreground"
+            className={`cursor-pointer px-3 py-1 rounded-full border ${activeType === category.value ? "bg-primary text-primary-foreground" : "bg-card text-foreground"
               }`}
           >
             {category.label}

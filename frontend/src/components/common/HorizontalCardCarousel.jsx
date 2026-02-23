@@ -51,7 +51,7 @@ const HorizontalCardCarousel = ({
             size="icon"
             onClick={() => scrollByAmount(-1)}
             disabled={!canScrollPrev}
-            className="hidden md:inline-flex absolute left-2 top-1/2 -translate-y-1/2 z-20 rounded-full bg-white/95"
+            className="hidden md:inline-flex absolute left-2 top-1/2 -translate-y-1/2 z-20 rounded-full bg-card/95"
             aria-label="Scroll previous"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -62,7 +62,7 @@ const HorizontalCardCarousel = ({
             size="icon"
             onClick={() => scrollByAmount(1)}
             disabled={!canScrollNext}
-            className="hidden md:inline-flex absolute right-2 top-1/2 -translate-y-1/2 z-20 rounded-full bg-white/95"
+            className="hidden md:inline-flex absolute right-2 top-1/2 -translate-y-1/2 z-20 rounded-full bg-card/95"
             aria-label="Scroll next"
           >
             <ChevronRight className="h-4 w-4" />

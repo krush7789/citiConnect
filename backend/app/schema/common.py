@@ -49,7 +49,11 @@ class PaginatedResponse(AbstractPage[T], Generic[T]):
         pagination = cast(PaginationParams, params)
         resolved_total = total if total is not None else len(items)
         resolved_page_size = max(1, pagination.page_size)
-        resolved_total_pages = 0 if resolved_total <= 0 else max(math.ceil(resolved_total / resolved_page_size), 1)
+        resolved_total_pages = (
+            0
+            if resolved_total <= 0
+            else max(math.ceil(resolved_total / resolved_page_size), 1)
+        )
         return cls(
             items=list(items),
             page=pagination.page,

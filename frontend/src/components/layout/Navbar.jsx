@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { MapPin, Search } from "lucide-react";
+import { LayoutDashboard, MapPin, Search } from "lucide-react";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import ProfileDrawer from "@/components/layout/ProfileDrawer";
 import { cityService } from "@/api/services";
 import { getSelectedCityId, setSelectedCityId } from "@/lib/city";
 import { useAuth } from "@/context/AuthContext";
+import { USER_ROLE } from "@/lib/enums";
 
 const navItems = [
   { label: "For You", path: "/" },
@@ -22,12 +23,13 @@ const navItems = [
 const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, isAuthenticated, pendingIntent, setPendingIntent, openAuthModal } = useAuth();
+  const { user, openAuthModal } = useAuth();
 
   const [cities, setCities] = useState([]);
   const [selectedCityId, setSelectedCity] = useState(getSelectedCityId());
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const isAdmin = user?.role === USER_ROLE.ADMIN;
 
   useEffect(() => {
     let mounted = true;
@@ -57,18 +59,10 @@ const Navbar = () => {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isAuthenticated || !pendingIntent) return;
-    if (pendingIntent.type === "navigate" && pendingIntent.path) {
-      navigate(pendingIntent.path);
-      setPendingIntent(null);
-    }
-  }, [isAuthenticated, pendingIntent, navigate, setPendingIntent]);
-
   const selectedCity = useMemo(() => cities.find((city) => city.id === selectedCityId), [cities, selectedCityId]);
 
   return (
-    <nav className="sticky top-0 z-40 w-full border-b bg-white/95 backdrop-blur">
+    <nav className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur">
       <div className="container mx-auto px-4 md:px-8">
         <div className="h-16 flex items-center justify-between gap-3">
           <div className="flex items-center gap-4">
@@ -76,7 +70,7 @@ const Navbar = () => {
               <p className="text-2xl font-black tracking-tight text-primary">CitiConnect</p>
             </Link>
 
-            <div className="hidden md:flex items-center gap-2 border rounded-full px-3 py-1.5 bg-muted/30">
+            <div className="hidden md:flex items-center gap-2">
               <MapPin className="h-4 w-4 text-primary" />
               <Select
                 value={selectedCityId}
@@ -84,9 +78,10 @@ const Navbar = () => {
                   setSelectedCity(event.target.value);
                   setSelectedCityId(event.target.value);
                 }}
-                showIcon={false}
-                wrapperClassName="w-auto"
-                className="h-auto border-0 bg-transparent p-0 pr-1 text-sm font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                size="sm"
+                tone="subtle"
+                wrapperClassName="w-[170px]"
+                className="rounded-full bg-card/95 font-semibold"
               >
                 {cities.length ? (
                   cities.map((city) => (
@@ -109,7 +104,9 @@ const Navbar = () => {
                   key={item.label}
                   to={item.path}
                   className={`px-3 py-1.5 rounded-full text-sm transition ${
-                    active ? "bg-foreground text-white" : "text-foreground/80 hover:bg-muted/60"
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
                   }`}
                 >
                   {item.label}
@@ -119,6 +116,18 @@ const Navbar = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {isAdmin ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 px-2 sm:px-3"
+                onClick={() => navigate("/admin/dashboard")}
+                aria-label="Open admin dashboard"
+              >
+                <LayoutDashboard className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">Admin Dashboard</span>
+              </Button>
+            ) : null}
 
             <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
               <DialogTrigger asChild>
@@ -156,7 +165,9 @@ const Navbar = () => {
                 key={item.label}
                 to={item.path}
                 className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs border ${
-                  active ? "bg-foreground text-white border-foreground" : "bg-white text-foreground/80"
+                  active
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card text-foreground/80 border-input hover:bg-muted/70 hover:text-foreground"
                 }`}
               >
                 {item.label}

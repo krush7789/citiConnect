@@ -18,7 +18,9 @@ async def list_cities(
         stmt = stmt.where(City.is_active == is_active)
         count_stmt = count_stmt.where(City.is_active == is_active)
 
-    stmt = stmt.order_by(City.name.asc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(City.name.asc()).offset((page - 1) * page_size).limit(page_size)
+    )
     total = (await db.execute(count_stmt)).scalar_one()
     items = (await db.execute(stmt)).scalars().all()
     return items, total

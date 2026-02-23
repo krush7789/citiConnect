@@ -76,7 +76,7 @@ const NotificationsPage = () => {
           {items.map((item) => (
             <article
               key={item.id}
-              className={`rounded-xl border p-4 transition ${item.is_read ? "bg-white" : "bg-primary/5 border-primary/30"}`}
+              className={`rounded-xl border p-4 transition ${item.is_read ? "bg-card" : "bg-primary/5 border-primary/30"}`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">

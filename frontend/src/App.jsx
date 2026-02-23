@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import MainLayout from "@/components/layout/MainLayout";
 import AdminLayout from "@/components/layout/AdminLayout";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
+import AuthIntentHandler from "@/components/layout/AuthIntentHandler";
 import { AuthProvider } from "@/context/AuthContext";
 import { USER_ROLE } from "@/lib/enums";
 import { Loader2 } from "lucide-react";
@@ -44,6 +45,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <React.Suspense fallback={<FullPageLoader />}>
+          <AuthIntentHandler />
           <Routes>
             <Route path="/" element={<MainLayout />}>
               <Route index element={<HomePage />} />

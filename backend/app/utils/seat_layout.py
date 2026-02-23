@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+
 def normalize_seat_layout(seat_layout: Any) -> dict[str, Any]:
     if isinstance(seat_layout, dict):
         return seat_layout
@@ -17,7 +18,9 @@ def normalize_seat_layout(seat_layout: Any) -> dict[str, Any]:
             continue
 
         seat_id_value = item.get("id")
-        seat_id = str(seat_id_value).strip().upper() if seat_id_value is not None else ""
+        seat_id = (
+            str(seat_id_value).strip().upper() if seat_id_value is not None else ""
+        )
         if not seat_id:
             row_name = str(item.get("row") or "").strip().upper()
             try:

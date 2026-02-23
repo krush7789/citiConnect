@@ -31,7 +31,9 @@ async def list_venues(
         stmt = stmt.where(Venue.name.ilike(q_like))
         count_stmt = count_stmt.where(Venue.name.ilike(q_like))
 
-    stmt = stmt.order_by(Venue.name.asc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(Venue.name.asc()).offset((page - 1) * page_size).limit(page_size)
+    )
     total = (await db.execute(count_stmt)).scalar_one()
     items = (await db.execute(stmt)).scalars().all()
     return items, total

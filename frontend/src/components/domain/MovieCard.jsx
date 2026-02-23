@@ -11,7 +11,7 @@ const MovieCard = ({ listing, compact = false, onToggleWishlist }) => {
   return (
     <article className="group">
       <Link to={`/listings/${listing.id}`} className="block">
-        <div className="relative rounded-2xl overflow-hidden shadow-sm border bg-white">
+        <div className="relative rounded-2xl overflow-hidden shadow-sm border bg-card text-card-foreground">
           {coverImageUrl ? (
             <img
               src={coverImageUrl}
@@ -46,7 +46,9 @@ const MovieCard = ({ listing, compact = false, onToggleWishlist }) => {
             type="button"
             onClick={() => onToggleWishlist(listing)}
             className={`h-8 w-8 rounded-full border grid place-content-center transition ${
-              listing.is_wishlisted ? "text-primary border-primary" : "text-muted-foreground hover:text-primary"
+              listing.is_wishlisted
+                ? "text-primary border-primary bg-primary/5"
+                : "text-muted-foreground border-input hover:text-foreground hover:border-foreground/30"
             }`}
             aria-label="Toggle wishlist"
           >

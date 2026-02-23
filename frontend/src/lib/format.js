@@ -1,9 +1,4 @@
 import dayjs from "dayjs";
-import utc from "dayjs/plugin/utc";
-import timezone from "dayjs/plugin/timezone";
-
-dayjs.extend(utc);
-dayjs.extend(timezone);
 
 export const formatCurrency = (amount, currency = "INR") => {
   const safeAmount = Number.isFinite(Number(amount)) ? Number(amount) : 0;
@@ -14,20 +9,18 @@ export const formatCurrency = (amount, currency = "INR") => {
   }).format(safeAmount);
 };
 
-export const formatDateTime = (isoString, timeZone) => {
+export const formatDateTime = (isoString) => {
   if (!isoString) return "--";
   const parsed = dayjs(isoString);
   if (!parsed.isValid()) return "--";
-  const zoned = timeZone ? parsed.tz(timeZone) : parsed.tz("UTC");
-  return zoned.format("ddd, DD MMM, hh:mm A");
+  return parsed.format("ddd, DD MMM, hh:mm A");
 };
 
-export const formatDateOnly = (isoString, timeZone) => {
+export const formatDateOnly = (isoString) => {
   if (!isoString) return "--";
   const parsed = dayjs(isoString);
   if (!parsed.isValid()) return "--";
-  const zoned = timeZone ? parsed.tz(timeZone) : parsed.tz("UTC");
-  return zoned.format("DD MMM YYYY");
+  return parsed.format("DD MMM YYYY");
 };
 
 export const getTimeRemainingMs = (isoExpiry) => {

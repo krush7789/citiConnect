@@ -24,7 +24,3 @@ router.include_router(media_router)
 router.include_router(admin_router)
 router.include_router(admin_jobs_router)
 
-
-@router.get("/")
-async def api_root():
-    return {"message": "CitiConnect API v1"}

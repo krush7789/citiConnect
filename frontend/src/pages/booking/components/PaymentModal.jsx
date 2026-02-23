@@ -14,7 +14,7 @@ const PaymentModal = ({
 }) => {
     return (
         <div className="fixed inset-0 z-50 grid place-content-center bg-black/45 p-4">
-            <div className="w-full max-w-md rounded-2xl border bg-white p-5 space-y-4">
+            <div className="w-full max-w-md rounded-2xl border bg-card text-card-foreground p-5 space-y-4">
                 <div>
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Razorpay</p>
                     <h2 className="text-xl font-bold mt-1">Complete payment</h2>

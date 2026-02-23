@@ -57,7 +57,7 @@ const HomePage = () => {
         price: `From Rs ${item.price_min}`,
         poster: item.cover_image_url,
         bgColor: item.type === "MOVIE" ? "#1f2937" : "#e11d48",
-        ctaText: "Book tickets",
+        ctaText: item.type === "RESTAURANT" ? "Reserve a spot" : "Book tickets",
       })),
     [featured]
   );

@@ -119,7 +119,7 @@ const SeatSelectionPage = () => {
             <p className="text-xs text-muted-foreground">{selectedSeats.length} selected</p>
             {occurrence ? (
               <p className="text-xs text-muted-foreground mt-1">
-                {formatDateTime(occurrence.start_time, listing?.timezone)}
+                {formatDateTime(occurrence.start_time)}
                 {" • "}
                 {occurrence.venue_name || listing?.venue?.name || listing?.address}
               </p>
@@ -130,7 +130,7 @@ const SeatSelectionPage = () => {
       </div>
 
       {listing ? (
-        <div className="rounded-xl border bg-white p-4 mb-5">
+        <div className="rounded-xl border bg-card p-4 mb-5">
           <p className="text-xs text-muted-foreground inline-flex items-center gap-1">
             <MapPin className="h-3 w-3" />
             {listing.venue?.name || listing.address}
@@ -144,7 +144,7 @@ const SeatSelectionPage = () => {
       {!loading && seatMap ? <SeatMap seatMap={seatMap} selectedSeats={selectedSeats} onToggleSeat={onToggleSeat} /> : null}
       {error ? <p className="text-sm text-destructive mt-4">{error}</p> : null}
 
-      <div className="fixed bottom-0 inset-x-0 border-t bg-white px-4 py-3">
+      <div className="fixed bottom-0 inset-x-0 border-t bg-card px-4 py-3">
         <div className="container mx-auto flex items-center justify-between gap-4">
           <div>
             <p className="text-xs text-muted-foreground">Total</p>

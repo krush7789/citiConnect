@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,7 @@ async def list_user_wishlist(
     page: int,
     page_size: int,
 ):
-    now = datetime.now(UTC)
+    now = datetime.now()
     active_occurrence_exists = exists(
         select(Occurrence.id).where(
             Occurrence.listing_id == Listing.id,
@@ -63,7 +63,7 @@ async def list_user_wishlist(
 
 
 async def is_published_listing(db: AsyncSession, *, listing_id: UUID) -> bool:
-    now = datetime.now(UTC)
+    now = datetime.now()
     active_occurrence_exists = exists(
         select(Occurrence.id).where(
             Occurrence.listing_id == Listing.id,
@@ -87,7 +87,9 @@ async def is_published_listing(db: AsyncSession, *, listing_id: UUID) -> bool:
     return (await db.execute(stmt)).scalar_one_or_none() is not None
 
 
-async def add_wishlist_item(db: AsyncSession, *, user_id: UUID, listing_id: UUID) -> bool:
+async def add_wishlist_item(
+    db: AsyncSession, *, user_id: UUID, listing_id: UUID
+) -> bool:
     existing = (
         await db.execute(
             select(Wishlist.id).where(
@@ -105,7 +107,9 @@ async def add_wishlist_item(db: AsyncSession, *, user_id: UUID, listing_id: UUID
     return True
 
 
-async def remove_wishlist_item(db: AsyncSession, *, user_id: UUID, listing_id: UUID) -> bool:
+async def remove_wishlist_item(
+    db: AsyncSession, *, user_id: UUID, listing_id: UUID
+) -> bool:
     wishlist_item = (
         await db.execute(
             select(Wishlist).where(
@@ -121,3 +125,4 @@ async def remove_wishlist_item(db: AsyncSession, *, user_id: UUID, listing_id: U
     await db.delete(wishlist_item)
     await db.flush()
     return True
+
