@@ -4,7 +4,6 @@ import LoginModal from "@/components/auth/LoginModal";
 import RegisterModal from "@/components/auth/RegisterModal";
 import ForgotPasswordModal from "@/components/auth/ForgotPasswordModal";
 import ChangePasswordModal from "@/components/auth/ChangePasswordModal";
-import ForceChangePasswordModal from "@/components/auth/ForceChangePasswordModal";
 import { authService } from "@/api/services";
 import { clearStoredAuth, setStoredToken, setUnauthorizedHandler, USER_STORAGE_KEY } from "@/api/client";
 import { normalizeUser } from "@/lib/contracts";
@@ -33,7 +32,6 @@ const modalRenderMap = {
   register: RegisterModal,
   forgot_password: ForgotPasswordModal,
   change_password: ChangePasswordModal,
-  force_change_password: ForceChangePasswordModal,
 };
 
 export const AuthProvider = ({ children }) => {
@@ -143,7 +141,7 @@ export const AuthProvider = ({ children }) => {
       clearStoredAuth();
       openAuthModal("login");
     });
-    return () => setUnauthorizedHandler(() => {});
+    return () => setUnauthorizedHandler(() => { });
   }, [openAuthModal]);
 
   const contextValue = useMemo(
