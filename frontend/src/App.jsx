@@ -33,6 +33,8 @@ const AdminLocationsPage = lazy(() => import("@/pages/admin/AdminLocationsPage")
 const AdminBookingsPage = lazy(() => import("@/pages/admin/AdminBookingsPage"));
 const AdminOffersPage = lazy(() => import("@/pages/admin/AdminOffersPage"));
 const AdminAuditLogsPage = lazy(() => import("@/pages/admin/AdminAuditLogsPage"));
+const AdminAnalyticsUsersPage = lazy(() => import("@/pages/admin/AdminAnalyticsUsersPage"));
+const AdminAnalyticsRevenuePage = lazy(() => import("@/pages/admin/AdminAnalyticsRevenuePage"));
 
 const protectedMainRoutes = [
   { path: "listings/:listingId/showtimes", element: <MovieShowtimesPage /> },
@@ -54,6 +56,8 @@ const adminRoutes = [
   { path: "bookings", element: <AdminBookingsPage /> },
   { path: "offers", element: <AdminOffersPage /> },
   { path: "audit-logs", element: <AdminAuditLogsPage /> },
+  { path: "analytics/users", element: <AdminAnalyticsUsersPage /> },
+  { path: "analytics/revenue", element: <AdminAnalyticsRevenuePage /> },
 ];
 
 const FullPageLoader = () => (

@@ -81,6 +81,7 @@ const ListingDetailsPage = () => {
   const [locationLoading, setLocationLoading] = useState(false);
   const [mapCoordinates, setMapCoordinates] = useState(null);
   const [error, setError] = useState("");
+  const [previewIndex, setPreviewIndex] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -123,6 +124,17 @@ const ListingDetailsPage = () => {
     const firstBookable = occurrences.find((occurrence) => isOccurrenceBookable(occurrence));
     return firstBookable || occurrences[0] || null;
   }, [occurrences]);
+
+  const mediaImages = useMemo(() => {
+    const rawImages = [
+      listing?.cover_image_url,
+      ...(Array.isArray(listing?.gallery_image_urls) ? listing.gallery_image_urls : []),
+    ];
+    const sanitized = rawImages
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean);
+    return [...new Set(sanitized)];
+  }, [listing?.cover_image_url, listing?.gallery_image_urls]);
 
   const canBookListing = useMemo(() => {
     if (!listing) return false;
@@ -168,11 +180,12 @@ const ListingDetailsPage = () => {
   }
 
   const metadataRows = toMetadataRows(listing);
-  const heroImage = listing.cover_image_url || listing.gallery_image_urls?.[0] || "";
+  const heroImage = mediaImages[0] || "";
+  const mediaTitle = listing.type === LISTING_TYPE.MOVIE ? "Posters" : "Photos";
 
   return (
     <div className="pb-16">
-      <div className="relative h-[320px] md:h-[420px] overflow-hidden">
+      <div className="relative h-[220px] md:h-[300px] overflow-hidden">
         {heroImage ? (
           <img src={heroImage} alt={listing.title} className="h-full w-full object-cover" />
         ) : (
@@ -182,7 +195,7 @@ const ListingDetailsPage = () => {
         <div className="absolute inset-x-0 bottom-0 container mx-auto px-4 md:px-8 pb-8">
           <div className="max-w-3xl">
             <p className="text-xs uppercase tracking-wide text-primary">{listing.type}</p>
-            <h1 className="text-3xl md:text-5xl font-black mt-1">{listing.title}</h1>
+            <h1 className="text-2xl md:text-4xl font-black mt-1">{listing.title}</h1>
             <p className="text-sm text-muted-foreground mt-2">{listing.description}</p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Badge variant="secondary">{listing.category}</Badge>
@@ -195,6 +208,83 @@ const ListingDetailsPage = () => {
 
       <div className="container mx-auto px-4 md:px-8 mt-8 grid lg:grid-cols-[1fr_340px] gap-8">
         <section className="space-y-6">
+          {mediaImages.length ? (
+            <div className="rounded-xl border p-4 bg-card">
+              <h2 className="font-semibold mb-3">{mediaTitle}</h2>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                {mediaImages.map((url, index) => (
+                  <button
+                    key={url}
+                    type="button"
+                    onClick={() => setPreviewIndex(index)}
+                    className="relative aspect-square overflow-hidden rounded-lg border border-slate-200 hover:ring-2 hover:ring-primary transition group"
+                  >
+                    <img
+                      src={url}
+                      alt={`${listing.title} ${mediaTitle.toLowerCase()} ${index + 1}`}
+                      className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
+                      loading="lazy"
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {previewIndex !== null && mediaImages[previewIndex] && (
+            <div
+              className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+              onClick={() => setPreviewIndex(null)}
+            >
+              <button
+                type="button"
+                onClick={() => setPreviewIndex(null)}
+                className="absolute top-4 right-4 text-white/80 hover:text-white text-3xl font-light z-10"
+                aria-label="Close preview"
+              >
+                ✕
+              </button>
+
+              {mediaImages.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    className="absolute left-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl font-light z-10"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPreviewIndex((prev) => (prev > 0 ? prev - 1 : mediaImages.length - 1));
+                    }}
+                    aria-label="Previous image"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl font-light z-10"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPreviewIndex((prev) => (prev < mediaImages.length - 1 ? prev + 1 : 0));
+                    }}
+                    aria-label="Next image"
+                  >
+                    ›
+                  </button>
+                </>
+              )}
+
+              <img
+                src={mediaImages[previewIndex]}
+                alt={`${listing.title} preview ${previewIndex + 1}`}
+                className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
+                onClick={(e) => e.stopPropagation()}
+              />
+
+              <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/70 text-sm">
+                {previewIndex + 1} / {mediaImages.length}
+              </p>
+            </div>
+          )}
+
           <div className="rounded-xl border p-4 bg-card">
             <h2 className="font-semibold mb-3">About</h2>
             <p className="text-sm text-muted-foreground leading-relaxed">{listing.description}</p>
@@ -237,7 +327,7 @@ const ListingDetailsPage = () => {
             {!mapCoordinates && locationLoading ? (
               <p className="text-sm text-muted-foreground">Locating venue on map...</p>
             ) : null}
-          {!mapCoordinates && !locationLoading ? (
+            {!mapCoordinates && !locationLoading ? (
               <p className="text-sm text-muted-foreground">To be announced.</p>
             ) : null}
           </div>
@@ -245,9 +335,8 @@ const ListingDetailsPage = () => {
             <h2 className="font-semibold mb-2">Booking slot</h2>
             <p className="text-sm text-muted-foreground">
               {selectedOccurrence
-                ? `${formatDateTime(selectedOccurrence.start_time)} - ${
-                    selectedOccurrence.venue_name || listing.venue?.name || listing.address
-                  }`
+                ? `${formatDateTime(selectedOccurrence.start_time)} - ${selectedOccurrence.venue_name || listing.venue?.name || listing.address
+                }`
                 : "No upcoming occurrence available"}
             </p>
           </div>

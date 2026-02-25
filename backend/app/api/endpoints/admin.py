@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -6,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependency import require_admin
+from app.models.enums import ListingType
 from app.schema.admin import (
     AdminAuditLogItem,
     AdminBookingItem,
+    AdminDashboardDrillResponse,
     AdminDashboardResponse,
     AdminListingCreateResponse,
     AdminListingDetailResponse,
@@ -43,6 +46,7 @@ from app.services.admin import (
     get_admin_audit_logs_page,
     get_admin_bookings_page,
     get_admin_dashboard,
+    get_admin_dashboard_drill_page,
     get_admin_listing_detail,
     get_admin_listings_page,
     get_admin_occurrences_page,
@@ -57,10 +61,79 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 @router.get("/dashboard", response_model=AdminDashboardResponse)
 async def get_dashboard(
+    preset: Literal["7d", "30d", "90d", "mtd", "custom"] = Query(default="30d"),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    city_id: UUID | None = Query(default=None),
+    listing_type: ListingType | None = Query(default=None),
+    interval: Literal["day", "week", "month"] | None = Query(default=None),
+    source_dimension: Literal[
+        "category",
+        "listing_type",
+        "city",
+        "payment_provider",
+        "offer_code",
+    ] = Query(default="category"),
+    top_n: int = Query(default=8, ge=1, le=25),
     _: object = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_admin_dashboard(db)
+    return await get_admin_dashboard(
+        db,
+        preset=preset,
+        date_from=date_from,
+        date_to=date_to,
+        city_id=city_id,
+        listing_type=listing_type,
+        interval=interval,
+        source_dimension=source_dimension,
+        top_n=top_n,
+    )
+
+
+@router.get("/dashboard/drill", response_model=AdminDashboardDrillResponse)
+async def get_dashboard_drill(
+    metric: Literal[
+        "revenue_sources",
+        "usage_by_region",
+        "event_attendance",
+        "new_users",
+    ] = Query(),
+    preset: Literal["7d", "30d", "90d", "mtd", "custom"] = Query(default="30d"),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    city_id: UUID | None = Query(default=None),
+    listing_type: ListingType | None = Query(default=None),
+    interval: Literal["day", "week", "month"] | None = Query(default=None),
+    source_dimension: Literal[
+        "category",
+        "listing_type",
+        "city",
+        "payment_provider",
+        "offer_code",
+    ] = Query(default="category"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    sort_by: str | None = Query(default=None),
+    sort_dir: Literal["asc", "desc"] = Query(default="desc"),
+    _: object = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_admin_dashboard_drill_page(
+        db,
+        metric=metric,
+        preset=preset,
+        date_from=date_from,
+        date_to=date_to,
+        city_id=city_id,
+        listing_type=listing_type,
+        interval=interval,
+        source_dimension=source_dimension,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
 
 
 @router.get("/listings", response_model=PaginatedResponse[AdminListingListItem])

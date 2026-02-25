@@ -156,7 +156,8 @@ export const userService = {
 };
 
 export const adminService = {
-  getDashboard: () => handleApiCall(() => api.get("/admin/dashboard")),
+  getDashboard: (params = {}) => handleApiCall(() => api.get("/admin/dashboard", { params })),
+  getDashboardDrill: (params = {}) => handleApiCall(() => api.get("/admin/dashboard/drill", { params })),
   getListings: (params = {}) => paginatedCall(() => api.get("/admin/listings", { params }), (item) => item),
   getListingById: (listingId) => handleApiCall(() => api.get(`/admin/listings/${listingId}`), (data) => data.listing || data),
   createListing: (payload) => handleApiCall(() => api.post("/admin/listings", payload)),

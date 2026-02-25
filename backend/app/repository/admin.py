@@ -4,13 +4,13 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, asc, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.booking import Booking
 from app.models.city import City
-from app.models.enums import BookingStatus, ListingStatus, OccurrenceStatus
+from app.models.enums import BookingStatus, ListingStatus, ListingType, OccurrenceStatus
 from app.models.listing import Listing
 from app.models.occurrence import Occurrence
 from app.models.offer import Offer
@@ -141,6 +141,791 @@ async def fetch_dashboard_payload(
         "top_rows": top_rows,
         "category_rows": category_rows,
     }
+
+
+IST_TIMEZONE_NAME = "Asia/Kolkata"
+
+
+def _bucket_start_expr(column, interval: str):
+    localized_time = func.timezone(IST_TIMEZONE_NAME, column)
+    truncated_local = func.date_trunc(interval, localized_time)
+    return func.timezone(IST_TIMEZONE_NAME, truncated_local)
+
+
+def _booking_created_conditions(
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+):
+    conditions = [
+        Booking.status == BookingStatus.CONFIRMED,
+        Booking.created_at >= start_utc,
+        Booking.created_at < end_utc,
+    ]
+    if city_id is not None:
+        conditions.append(Occurrence.city_id == city_id)
+    if listing_type is not None:
+        conditions.append(Listing.type == listing_type)
+    return conditions
+
+
+def _booking_occurrence_window_conditions(
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+):
+    conditions = [
+        Booking.status == BookingStatus.CONFIRMED,
+        Occurrence.start_time >= start_utc,
+        Occurrence.start_time < end_utc,
+    ]
+    if city_id is not None:
+        conditions.append(Occurrence.city_id == city_id)
+    if listing_type is not None:
+        conditions.append(Listing.type == listing_type)
+    return conditions
+
+
+def _growth_pct(current: int | float, previous: int | float) -> float | None:
+    if not previous:
+        return None
+    return ((float(current) - float(previous)) / float(previous)) * 100.0
+
+
+def _source_dimension_expr(source_dimension: str):
+    if source_dimension == "category":
+        return func.coalesce(
+            func.nullif(func.trim(Listing.category), ""),
+            "Uncategorized",
+        )
+    if source_dimension == "listing_type":
+        return cast(Listing.type, String)
+    if source_dimension == "city":
+        return func.coalesce(func.nullif(func.trim(City.name), ""), "Unknown")
+    if source_dimension == "payment_provider":
+        return func.coalesce(
+            func.nullif(func.trim(Booking.payment_provider), ""),
+            "Unknown",
+        )
+    if source_dimension == "offer_code":
+        return func.coalesce(func.nullif(func.trim(Offer.code), ""), "No Offer")
+    raise ValueError("Invalid source dimension")
+
+
+async def fetch_dashboard_analytics_kpis(
+    db: AsyncSession,
+    *,
+    current_start_utc: datetime,
+    current_end_utc: datetime,
+    previous_start_utc: datetime,
+    previous_end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+) -> dict[str, object]:
+    current_new_users = int(
+        (
+            await db.execute(
+                select(func.count(User.id)).where(
+                    User.created_at >= current_start_utc,
+                    User.created_at < current_end_utc,
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    previous_new_users = int(
+        (
+            await db.execute(
+                select(func.count(User.id)).where(
+                    User.created_at >= previous_start_utc,
+                    User.created_at < previous_end_utc,
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    current_revenue_row = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+                func.count(func.distinct(Booking.user_id)).label("transacting_users"),
+            )
+            .select_from(Booking)
+            .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+            .join(Listing, Listing.id == Occurrence.listing_id)
+            .where(
+                *_booking_created_conditions(
+                    start_utc=current_start_utc,
+                    end_utc=current_end_utc,
+                    city_id=city_id,
+                    listing_type=listing_type,
+                )
+            )
+        )
+    ).first()
+    previous_revenue_row = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+            )
+            .select_from(Booking)
+            .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+            .join(Listing, Listing.id == Occurrence.listing_id)
+            .where(
+                *_booking_created_conditions(
+                    start_utc=previous_start_utc,
+                    end_utc=previous_end_utc,
+                    city_id=city_id,
+                    listing_type=listing_type,
+                )
+            )
+        )
+    ).first()
+
+    current_revenue = (
+        Decimal(str(current_revenue_row[0] or 0)) if current_revenue_row else Decimal("0")
+    )
+    previous_revenue = (
+        Decimal(str(previous_revenue_row[0] or 0))
+        if previous_revenue_row
+        else Decimal("0")
+    )
+    current_transacting_users = int(current_revenue_row[1] or 0) if current_revenue_row else 0
+
+    attendance_total = int(
+        (
+            await db.execute(
+                select(func.coalesce(func.sum(Booking.quantity), 0))
+                .select_from(Booking)
+                .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+                .join(Listing, Listing.id == Occurrence.listing_id)
+                .where(
+                    *_booking_occurrence_window_conditions(
+                        start_utc=current_start_utc,
+                        end_utc=current_end_utc,
+                        city_id=city_id,
+                        listing_type=listing_type,
+                    )
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    arpu = None
+    if current_transacting_users > 0:
+        arpu = float(current_revenue / Decimal(current_transacting_users))
+
+    return {
+        "new_users": current_new_users,
+        "user_growth_rate_pct": _growth_pct(current_new_users, previous_new_users),
+        "revenue_period": float(current_revenue),
+        "revenue_growth_rate_pct": _growth_pct(
+            float(current_revenue), float(previous_revenue)
+        ),
+        "arpu": arpu,
+        "event_attendance_total": attendance_total,
+    }
+
+
+async def fetch_dashboard_analytics_series(
+    db: AsyncSession,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+    interval: str,
+) -> list[dict[str, object]]:
+    series_by_bucket: dict[datetime, dict[str, object]] = {}
+
+    def ensure_bucket_row(bucket_start: datetime) -> dict[str, object]:
+        existing = series_by_bucket.get(bucket_start)
+        if existing:
+            return existing
+        row = {
+            "bucket_start": bucket_start,
+            "bucket_label": bucket_start.isoformat(),
+            "new_users": 0,
+            "revenue": 0.0,
+            "transacting_users": 0,
+            "arpu": None,
+            "attendance": 0,
+        }
+        series_by_bucket[bucket_start] = row
+        return row
+
+    user_bucket = _bucket_start_expr(User.created_at, interval).label("bucket_start")
+    new_user_rows = (
+        await db.execute(
+            select(
+                user_bucket,
+                func.count(User.id).label("new_users"),
+            )
+            .where(User.created_at >= start_utc, User.created_at < end_utc)
+            .group_by(user_bucket)
+            .order_by(user_bucket.asc())
+        )
+    ).all()
+    for bucket_start, new_users in new_user_rows:
+        if bucket_start is None:
+            continue
+        row = ensure_bucket_row(bucket_start)
+        row["new_users"] = int(new_users or 0)
+
+    revenue_bucket = _bucket_start_expr(Booking.created_at, interval).label("bucket_start")
+    revenue_rows = (
+        await db.execute(
+            select(
+                revenue_bucket,
+                func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+                func.count(func.distinct(Booking.user_id)).label("transacting_users"),
+            )
+            .select_from(Booking)
+            .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+            .join(Listing, Listing.id == Occurrence.listing_id)
+            .where(
+                *_booking_created_conditions(
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                    city_id=city_id,
+                    listing_type=listing_type,
+                )
+            )
+            .group_by(revenue_bucket)
+            .order_by(revenue_bucket.asc())
+        )
+    ).all()
+    for bucket_start, revenue, transacting_users in revenue_rows:
+        if bucket_start is None:
+            continue
+        row = ensure_bucket_row(bucket_start)
+        row["revenue"] = float(revenue or 0)
+        row["transacting_users"] = int(transacting_users or 0)
+
+    attendance_bucket = _bucket_start_expr(Occurrence.start_time, interval).label(
+        "bucket_start"
+    )
+    attendance_rows = (
+        await db.execute(
+            select(
+                attendance_bucket,
+                func.coalesce(func.sum(Booking.quantity), 0).label("attendance"),
+            )
+            .select_from(Booking)
+            .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+            .join(Listing, Listing.id == Occurrence.listing_id)
+            .where(
+                *_booking_occurrence_window_conditions(
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                    city_id=city_id,
+                    listing_type=listing_type,
+                )
+            )
+            .group_by(attendance_bucket)
+            .order_by(attendance_bucket.asc())
+        )
+    ).all()
+    for bucket_start, attendance in attendance_rows:
+        if bucket_start is None:
+            continue
+        row = ensure_bucket_row(bucket_start)
+        row["attendance"] = int(attendance or 0)
+
+    rows = sorted(
+        series_by_bucket.values(),
+        key=lambda item: item["bucket_start"],
+    )
+    for row in rows:
+        transacting_users = int(row.get("transacting_users") or 0)
+        revenue = float(row.get("revenue") or 0)
+        row["arpu"] = revenue / transacting_users if transacting_users > 0 else None
+    return rows
+
+
+async def fetch_dashboard_revenue_sources(
+    db: AsyncSession,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+    source_dimension: str,
+    limit: int,
+) -> list[dict[str, object]]:
+    source_expr = _source_dimension_expr(source_dimension).label("key")
+    stmt = (
+        select(
+            source_expr,
+            func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+            func.count(Booking.id).label("bookings"),
+            func.count(func.distinct(Booking.user_id)).label("transacting_users"),
+        )
+        .select_from(Booking)
+        .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+        .join(Listing, Listing.id == Occurrence.listing_id)
+        .join(City, City.id == Occurrence.city_id, isouter=True)
+    )
+    if source_dimension == "offer_code":
+        stmt = stmt.join(Offer, Offer.id == Booking.applied_offer_id, isouter=True)
+    stmt = stmt.where(
+        *_booking_created_conditions(
+            start_utc=start_utc,
+            end_utc=end_utc,
+            city_id=city_id,
+            listing_type=listing_type,
+        )
+    )
+    stmt = (
+        stmt.group_by(source_expr)
+        .order_by(desc(func.coalesce(func.sum(Booking.final_price), 0)), asc(source_expr))
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "key": str(row[0] or "Unknown"),
+            "revenue": float(row[1] or 0),
+            "bookings": int(row[2] or 0),
+            "transacting_users": int(row[3] or 0),
+        }
+        for row in rows
+    ]
+
+
+async def fetch_dashboard_usage_by_region(
+    db: AsyncSession,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+    limit: int,
+) -> list[dict[str, object]]:
+    city_name = func.coalesce(func.nullif(func.trim(City.name), ""), "Unknown").label(
+        "city_name"
+    )
+    rows = (
+        await db.execute(
+            select(
+                Occurrence.city_id,
+                city_name,
+                func.count(Booking.id).label("bookings"),
+                func.count(func.distinct(Booking.user_id)).label("transacting_users"),
+                func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+            )
+            .select_from(Booking)
+            .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+            .join(Listing, Listing.id == Occurrence.listing_id)
+            .join(City, City.id == Occurrence.city_id, isouter=True)
+            .where(
+                *_booking_created_conditions(
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                    city_id=city_id,
+                    listing_type=listing_type,
+                )
+            )
+            .group_by(Occurrence.city_id, city_name)
+            .order_by(
+                desc(func.coalesce(func.sum(Booking.final_price), 0)),
+                asc(city_name),
+            )
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "city_id": row[0],
+            "city_name": str(row[1] or "Unknown"),
+            "bookings": int(row[2] or 0),
+            "transacting_users": int(row[3] or 0),
+            "revenue": float(row[4] or 0),
+        }
+        for row in rows
+    ]
+
+
+async def fetch_dashboard_event_attendance(
+    db: AsyncSession,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+    limit: int,
+) -> list[dict[str, object]]:
+    city_name = func.coalesce(func.nullif(func.trim(City.name), ""), "Unknown").label(
+        "city_name"
+    )
+    rows = (
+        await db.execute(
+            select(
+                Occurrence.id.label("occurrence_id"),
+                Listing.id.label("listing_id"),
+                Listing.title.label("listing_title"),
+                city_name,
+                Occurrence.start_time.label("occurrence_start"),
+                func.coalesce(func.sum(Booking.quantity), 0).label("attendance"),
+                func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+                func.count(Booking.id).label("confirmed_bookings"),
+            )
+            .select_from(Booking)
+            .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+            .join(Listing, Listing.id == Occurrence.listing_id)
+            .join(City, City.id == Occurrence.city_id, isouter=True)
+            .where(
+                *_booking_occurrence_window_conditions(
+                    start_utc=start_utc,
+                    end_utc=end_utc,
+                    city_id=city_id,
+                    listing_type=listing_type,
+                )
+            )
+            .group_by(
+                Occurrence.id,
+                Listing.id,
+                Listing.title,
+                city_name,
+                Occurrence.start_time,
+            )
+            .order_by(
+                desc(func.coalesce(func.sum(Booking.quantity), 0)),
+                desc(func.coalesce(func.sum(Booking.final_price), 0)),
+                asc(Listing.title),
+            )
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "occurrence_id": row[0],
+            "listing_id": row[1],
+            "listing_title": str(row[2] or "Listing"),
+            "city_name": str(row[3] or "Unknown"),
+            "occurrence_start": row[4],
+            "attendance": int(row[5] or 0),
+            "revenue": float(row[6] or 0),
+            "confirmed_bookings": int(row[7] or 0),
+        }
+        for row in rows
+    ]
+
+
+async def fetch_dashboard_drill_revenue_sources(
+    db: AsyncSession,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+    source_dimension: str,
+    page: int,
+    page_size: int,
+    sort_by: str,
+    sort_dir: str,
+) -> tuple[list[dict[str, object]], int]:
+    source_expr = _source_dimension_expr(source_dimension).label("key")
+    grouped_stmt = (
+        select(
+            source_expr,
+            func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+            func.count(Booking.id).label("bookings"),
+            func.count(func.distinct(Booking.user_id)).label("transacting_users"),
+        )
+        .select_from(Booking)
+        .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+        .join(Listing, Listing.id == Occurrence.listing_id)
+        .join(City, City.id == Occurrence.city_id, isouter=True)
+    )
+    if source_dimension == "offer_code":
+        grouped_stmt = grouped_stmt.join(
+            Offer, Offer.id == Booking.applied_offer_id, isouter=True
+        )
+    grouped_stmt = grouped_stmt.where(
+        *_booking_created_conditions(
+            start_utc=start_utc,
+            end_utc=end_utc,
+            city_id=city_id,
+            listing_type=listing_type,
+        )
+    ).group_by(source_expr)
+
+    grouped_subquery = grouped_stmt.subquery()
+    sort_map = {
+        "key": grouped_subquery.c.key,
+        "revenue": grouped_subquery.c.revenue,
+        "bookings": grouped_subquery.c.bookings,
+        "transacting_users": grouped_subquery.c.transacting_users,
+    }
+    sort_column = sort_map[sort_by]
+    order_expr = asc(sort_column) if sort_dir == "asc" else desc(sort_column)
+
+    total = int(
+        (
+            await db.execute(select(func.count()).select_from(grouped_subquery))
+        ).scalar_one()
+        or 0
+    )
+    rows = (
+        await db.execute(
+            select(
+                grouped_subquery.c.key,
+                grouped_subquery.c.revenue,
+                grouped_subquery.c.bookings,
+                grouped_subquery.c.transacting_users,
+            )
+            .select_from(grouped_subquery)
+            .order_by(order_expr, asc(grouped_subquery.c.key))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    items = [
+        {
+            "key": str(row[0] or "Unknown"),
+            "revenue": float(row[1] or 0),
+            "bookings": int(row[2] or 0),
+            "transacting_users": int(row[3] or 0),
+        }
+        for row in rows
+    ]
+    return items, total
+
+
+async def fetch_dashboard_drill_usage_by_region(
+    db: AsyncSession,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+    page: int,
+    page_size: int,
+    sort_by: str,
+    sort_dir: str,
+) -> tuple[list[dict[str, object]], int]:
+    city_name = func.coalesce(func.nullif(func.trim(City.name), ""), "Unknown").label(
+        "city_name"
+    )
+    grouped_subquery = (
+        select(
+            Occurrence.city_id.label("city_id"),
+            city_name,
+            func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+            func.count(Booking.id).label("bookings"),
+            func.count(func.distinct(Booking.user_id)).label("transacting_users"),
+        )
+        .select_from(Booking)
+        .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+        .join(Listing, Listing.id == Occurrence.listing_id)
+        .join(City, City.id == Occurrence.city_id, isouter=True)
+        .where(
+            *_booking_created_conditions(
+                start_utc=start_utc,
+                end_utc=end_utc,
+                city_id=city_id,
+                listing_type=listing_type,
+            )
+        )
+        .group_by(Occurrence.city_id, city_name)
+        .subquery()
+    )
+
+    sort_map = {
+        "city_name": grouped_subquery.c.city_name,
+        "revenue": grouped_subquery.c.revenue,
+        "bookings": grouped_subquery.c.bookings,
+        "transacting_users": grouped_subquery.c.transacting_users,
+    }
+    sort_column = sort_map[sort_by]
+    order_expr = asc(sort_column) if sort_dir == "asc" else desc(sort_column)
+    total = int(
+        (
+            await db.execute(select(func.count()).select_from(grouped_subquery))
+        ).scalar_one()
+        or 0
+    )
+    rows = (
+        await db.execute(
+            select(
+                grouped_subquery.c.city_id,
+                grouped_subquery.c.city_name,
+                grouped_subquery.c.revenue,
+                grouped_subquery.c.bookings,
+                grouped_subquery.c.transacting_users,
+            )
+            .order_by(order_expr, asc(grouped_subquery.c.city_name))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    items = [
+        {
+            "city_id": row[0],
+            "city_name": str(row[1] or "Unknown"),
+            "revenue": float(row[2] or 0),
+            "bookings": int(row[3] or 0),
+            "transacting_users": int(row[4] or 0),
+        }
+        for row in rows
+    ]
+    return items, total
+
+
+async def fetch_dashboard_drill_event_attendance(
+    db: AsyncSession,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    city_id: UUID | None,
+    listing_type: ListingType | None,
+    page: int,
+    page_size: int,
+    sort_by: str,
+    sort_dir: str,
+) -> tuple[list[dict[str, object]], int]:
+    city_name = func.coalesce(func.nullif(func.trim(City.name), ""), "Unknown").label(
+        "city_name"
+    )
+    grouped_subquery = (
+        select(
+            Occurrence.id.label("occurrence_id"),
+            Listing.id.label("listing_id"),
+            Listing.title.label("listing_title"),
+            city_name,
+            Occurrence.start_time.label("occurrence_start"),
+            func.coalesce(func.sum(Booking.quantity), 0).label("attendance"),
+            func.coalesce(func.sum(Booking.final_price), 0).label("revenue"),
+            func.count(Booking.id).label("confirmed_bookings"),
+        )
+        .select_from(Booking)
+        .join(Occurrence, Occurrence.id == Booking.occurrence_id)
+        .join(Listing, Listing.id == Occurrence.listing_id)
+        .join(City, City.id == Occurrence.city_id, isouter=True)
+        .where(
+            *_booking_occurrence_window_conditions(
+                start_utc=start_utc,
+                end_utc=end_utc,
+                city_id=city_id,
+                listing_type=listing_type,
+            )
+        )
+        .group_by(
+            Occurrence.id,
+            Listing.id,
+            Listing.title,
+            city_name,
+            Occurrence.start_time,
+        )
+        .subquery()
+    )
+
+    sort_map = {
+        "listing_title": grouped_subquery.c.listing_title,
+        "city_name": grouped_subquery.c.city_name,
+        "occurrence_start": grouped_subquery.c.occurrence_start,
+        "attendance": grouped_subquery.c.attendance,
+        "revenue": grouped_subquery.c.revenue,
+        "confirmed_bookings": grouped_subquery.c.confirmed_bookings,
+    }
+    sort_column = sort_map[sort_by]
+    order_expr = asc(sort_column) if sort_dir == "asc" else desc(sort_column)
+    total = int(
+        (
+            await db.execute(select(func.count()).select_from(grouped_subquery))
+        ).scalar_one()
+        or 0
+    )
+    rows = (
+        await db.execute(
+            select(
+                grouped_subquery.c.occurrence_id,
+                grouped_subquery.c.listing_id,
+                grouped_subquery.c.listing_title,
+                grouped_subquery.c.city_name,
+                grouped_subquery.c.occurrence_start,
+                grouped_subquery.c.attendance,
+                grouped_subquery.c.revenue,
+                grouped_subquery.c.confirmed_bookings,
+            )
+            .order_by(order_expr, desc(grouped_subquery.c.occurrence_start))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    items = [
+        {
+            "occurrence_id": row[0],
+            "listing_id": row[1],
+            "listing_title": str(row[2] or "Listing"),
+            "city_name": str(row[3] or "Unknown"),
+            "occurrence_start": row[4],
+            "attendance": int(row[5] or 0),
+            "revenue": float(row[6] or 0),
+            "confirmed_bookings": int(row[7] or 0),
+        }
+        for row in rows
+    ]
+    return items, total
+
+
+async def fetch_dashboard_drill_new_users(
+    db: AsyncSession,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    page: int,
+    page_size: int,
+    sort_by: str,
+    sort_dir: str,
+) -> tuple[list[dict[str, object]], int]:
+    sort_map = {
+        "id": User.id,
+        "name": User.name,
+        "email": User.email,
+        "created_at": User.created_at,
+    }
+    sort_column = sort_map[sort_by]
+    order_expr = asc(sort_column) if sort_dir == "asc" else desc(sort_column)
+    conditions = [User.created_at >= start_utc, User.created_at < end_utc]
+
+    total = int(
+        (
+            await db.execute(select(func.count(User.id)).where(*conditions))
+        ).scalar_one()
+        or 0
+    )
+    rows = (
+        await db.execute(
+            select(
+                User.id,
+                User.name,
+                User.email,
+                User.created_at,
+            )
+            .where(*conditions)
+            .order_by(order_expr, desc(User.created_at))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    items = [
+        {
+            "id": row[0],
+            "name": row[1] or "",
+            "email": row[2] or "",
+            "created_at": row[3],
+        }
+        for row in rows
+    ]
+    return items, total
 
 
 async def list_admin_listings(

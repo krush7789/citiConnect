@@ -41,7 +41,14 @@ from app.schema.admin import (
 )
 from app.services.email import send_occurrence_cancelled_email
 from app.services.geocoding import geocode_address
-from app.utils.datetime_utils import normalize_datetime, reference_end_time, utcnow
+from app.utils.datetime_utils import (
+    IST_TIMEZONE,
+    IST_TIMEZONE_NAME,
+    normalize_datetime,
+    reference_end_time,
+    resolve_ist_range_for_preset,
+    utcnow,
+)
 from app.utils.pagination import build_paginated_response
 
 logger = logging.getLogger(__name__)
@@ -52,6 +59,50 @@ NATIONWIDE_VENUE_NAME = "Multiple Venues"
 NATIONWIDE_VENUE_ADDRESS = "Venue announced later"
 
 EnumType = TypeVar("EnumType", bound=Enum)
+
+DEFAULT_DASHBOARD_PRESET = "30d"
+DEFAULT_SOURCE_DIMENSION = "category"
+DEFAULT_TOP_N = 8
+MAX_TOP_N = 25
+MAX_DATE_WINDOW_DAYS = 365
+DEFAULT_DRILL_PAGE = 1
+DEFAULT_DRILL_PAGE_SIZE = 25
+MAX_DRILL_PAGE_SIZE = 100
+
+DASHBOARD_PRESETS = {"7d", "30d", "90d", "mtd", "custom"}
+DASHBOARD_INTERVALS = {"day", "week", "month"}
+SOURCE_DIMENSIONS = {
+    "category",
+    "listing_type",
+    "city",
+    "payment_provider",
+    "offer_code",
+}
+DRILL_METRICS = {
+    "revenue_sources",
+    "usage_by_region",
+    "event_attendance",
+    "new_users",
+}
+DRILL_SORT_WHITELIST: dict[str, set[str]] = {
+    "revenue_sources": {"key", "revenue", "bookings", "transacting_users"},
+    "usage_by_region": {"city_name", "revenue", "bookings", "transacting_users"},
+    "event_attendance": {
+        "listing_title",
+        "city_name",
+        "occurrence_start",
+        "attendance",
+        "revenue",
+        "confirmed_bookings",
+    },
+    "new_users": {"id", "name", "email", "created_at"},
+}
+DRILL_DEFAULT_SORT_BY = {
+    "revenue_sources": "revenue",
+    "usage_by_region": "revenue",
+    "event_attendance": "attendance",
+    "new_users": "created_at",
+}
 
 
 def normalize_discount_type(raw: str) -> DiscountType:
@@ -129,6 +180,214 @@ def parse_occurrence_status(value: str | None) -> OccurrenceStatus | None:
         field_name="status",
         message="Invalid occurrence status",
     )
+
+
+def ensure_valid_dashboard_metric(metric: str) -> str:
+    normalized = (metric or "").strip()
+    if normalized in DRILL_METRICS:
+        return normalized
+    raise_api_error(
+        422,
+        "VALIDATION_ERROR",
+        "Some fields are invalid",
+        {"fields": {"metric": "Invalid metric"}},
+    )
+
+
+def ensure_valid_source_dimension(value: str) -> str:
+    normalized = (value or "").strip().lower() or DEFAULT_SOURCE_DIMENSION
+    if normalized in SOURCE_DIMENSIONS:
+        return normalized
+    raise_api_error(
+        422,
+        "VALIDATION_ERROR",
+        "Some fields are invalid",
+        {"fields": {"source_dimension": "Invalid source dimension"}},
+    )
+
+
+def ensure_valid_preset(value: str) -> str:
+    normalized = (value or "").strip().lower() or DEFAULT_DASHBOARD_PRESET
+    if normalized in DASHBOARD_PRESETS:
+        return normalized
+    raise_api_error(
+        422,
+        "VALIDATION_ERROR",
+        "Some fields are invalid",
+        {"fields": {"preset": "Invalid preset"}},
+    )
+
+
+def ensure_valid_interval(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in DASHBOARD_INTERVALS:
+        return normalized
+    raise_api_error(
+        422,
+        "VALIDATION_ERROR",
+        "Some fields are invalid",
+        {"fields": {"interval": "Invalid interval"}},
+    )
+
+
+def resolve_dashboard_range(
+    *,
+    preset: str,
+    date_from: date | None,
+    date_to: date | None,
+) -> tuple[datetime, datetime]:
+    try:
+        start_utc, end_utc = resolve_ist_range_for_preset(
+            preset=preset,
+            date_from=date_from,
+            date_to=date_to,
+            now=utcnow(),
+        )
+    except ValueError as exc:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"date_range": str(exc)}},
+        )
+
+    if end_utc <= start_utc:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"date_range": "Invalid date range"}},
+        )
+
+    if end_utc - start_utc > timedelta(days=MAX_DATE_WINDOW_DAYS):
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {
+                "fields": {
+                    "date_range": f"Maximum range is {MAX_DATE_WINDOW_DAYS} days"
+                }
+            },
+        )
+
+    return start_utc, end_utc
+
+
+def resolve_auto_interval(
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    requested_interval: str | None,
+) -> str:
+    normalized_interval = ensure_valid_interval(requested_interval)
+    if normalized_interval:
+        return normalized_interval
+
+    days = (end_utc - start_utc).total_seconds() / 86400
+    return "day" if days <= 92 else "week"
+
+
+def previous_period(start_utc: datetime, end_utc: datetime) -> tuple[datetime, datetime]:
+    period_span = end_utc - start_utc
+    return start_utc - period_span, start_utc
+
+
+def calculate_growth_pct(current: int | float, previous: int | float) -> float | None:
+    if not previous:
+        return None
+    return ((float(current) - float(previous)) / float(previous)) * 100.0
+
+
+def normalize_drill_sort(metric: str, sort_by: str | None, sort_dir: str) -> tuple[str, str]:
+    allowed_sort_fields = DRILL_SORT_WHITELIST[metric]
+    normalized_sort_by = (sort_by or "").strip() or DRILL_DEFAULT_SORT_BY[metric]
+    if normalized_sort_by not in allowed_sort_fields:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"sort_by": f"Invalid sort_by for metric '{metric}'"}},
+        )
+
+    normalized_sort_dir = (sort_dir or "desc").strip().lower()
+    if normalized_sort_dir not in {"asc", "desc"}:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"sort_dir": "sort_dir must be 'asc' or 'desc'"}},
+        )
+
+    return normalized_sort_by, normalized_sort_dir
+
+
+def resolve_effective_ist_dates(
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> tuple[date, date]:
+    start_date = start_utc.astimezone(IST_TIMEZONE).date()
+    inclusive_end_date = (end_utc - timedelta(microseconds=1)).astimezone(
+        IST_TIMEZONE
+    ).date()
+    return start_date, inclusive_end_date
+
+
+def with_series_growth(series_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    previous_new_users: int | None = None
+    previous_revenue: float | None = None
+
+    normalized_rows: list[dict[str, Any]] = []
+    for row in series_rows:
+        current_new_users = int(row.get("new_users") or 0)
+        current_revenue = float(row.get("revenue") or 0)
+        normalized = {
+            **row,
+            "new_users_growth_rate_pct": calculate_growth_pct(
+                current_new_users, previous_new_users or 0
+            )
+            if previous_new_users is not None
+            else None,
+            "revenue_growth_rate_pct": calculate_growth_pct(
+                current_revenue, previous_revenue or 0
+            )
+            if previous_revenue is not None
+            else None,
+        }
+        normalized_rows.append(normalized)
+        previous_new_users = current_new_users
+        previous_revenue = current_revenue
+
+    return normalized_rows
+
+
+def normalize_top_n(value: int) -> int:
+    if value < 1 or value > MAX_TOP_N:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"top_n": f"top_n must be between 1 and {MAX_TOP_N}"}},
+        )
+    return value
+
+
+def normalize_page_size(value: int) -> int:
+    if value < 1 or value > MAX_DRILL_PAGE_SIZE:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {
+                "fields": {
+                    "page_size": f"page_size must be between 1 and {MAX_DRILL_PAGE_SIZE}"
+                }
+            },
+        )
+    return value
 
 
 def parse_uuid_or_none(value: str | None) -> UUID | None:
@@ -454,9 +713,38 @@ async def add_audit_log(
     )
 
 
-async def get_admin_dashboard(db: AsyncSession) -> dict[str, Any]:
+async def get_admin_dashboard(
+    db: AsyncSession,
+    *,
+    preset: str = DEFAULT_DASHBOARD_PRESET,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    city_id: UUID | None = None,
+    listing_type: ListingType | None = None,
+    interval: str | None = None,
+    source_dimension: str = DEFAULT_SOURCE_DIMENSION,
+    top_n: int = DEFAULT_TOP_N,
+) -> dict[str, Any]:
+    normalized_preset = ensure_valid_preset(preset)
+    normalized_source_dimension = ensure_valid_source_dimension(source_dimension)
+    normalized_top_n = normalize_top_n(top_n)
+
+    current_start_utc, current_end_utc = resolve_dashboard_range(
+        preset=normalized_preset,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    previous_start_utc, previous_end_utc = previous_period(
+        current_start_utc, current_end_utc
+    )
+    resolved_interval = resolve_auto_interval(
+        start_utc=current_start_utc,
+        end_utc=current_end_utc,
+        requested_interval=interval,
+    )
+
     now = utcnow()
-    start_of_day = datetime.combine(now.date(), time.min)
+    start_of_day = datetime.combine(now.date(), time.min, tzinfo=now.tzinfo)
     next_day = start_of_day + timedelta(days=1)
     week_ago = now - timedelta(days=7)
 
@@ -466,10 +754,57 @@ async def get_admin_dashboard(db: AsyncSession) -> dict[str, Any]:
         next_day=next_day,
         week_ago=week_ago,
     )
+    analytics_kpis = await admin_repository.fetch_dashboard_analytics_kpis(
+        db,
+        current_start_utc=current_start_utc,
+        current_end_utc=current_end_utc,
+        previous_start_utc=previous_start_utc,
+        previous_end_utc=previous_end_utc,
+        city_id=city_id,
+        listing_type=listing_type,
+    )
+    analytics_series = await admin_repository.fetch_dashboard_analytics_series(
+        db,
+        start_utc=current_start_utc,
+        end_utc=current_end_utc,
+        city_id=city_id,
+        listing_type=listing_type,
+        interval=resolved_interval,
+    )
+    revenue_sources = await admin_repository.fetch_dashboard_revenue_sources(
+        db,
+        start_utc=current_start_utc,
+        end_utc=current_end_utc,
+        city_id=city_id,
+        listing_type=listing_type,
+        source_dimension=normalized_source_dimension,
+        limit=normalized_top_n,
+    )
+    usage_by_region = await admin_repository.fetch_dashboard_usage_by_region(
+        db,
+        start_utc=current_start_utc,
+        end_utc=current_end_utc,
+        city_id=city_id,
+        listing_type=listing_type,
+        limit=normalized_top_n,
+    )
+    event_attendance_top = await admin_repository.fetch_dashboard_event_attendance(
+        db,
+        start_utc=current_start_utc,
+        end_utc=current_end_utc,
+        city_id=city_id,
+        listing_type=listing_type,
+        limit=normalized_top_n,
+    )
+
     total_revenue = payload["total_revenue"] or Decimal("0")
     recent_rows = payload["recent_rows"]
     top_rows = payload["top_rows"]
     category_rows = payload["category_rows"]
+    period_from_ist, period_to_ist = resolve_effective_ist_dates(
+        start_utc=current_start_utc,
+        end_utc=current_end_utc,
+    )
 
     return {
         "stats": {
@@ -509,6 +844,134 @@ async def get_admin_dashboard(db: AsyncSession) -> dict[str, Any]:
             }
             for row in category_rows
         ],
+        "analytics_kpis": analytics_kpis,
+        "analytics_series": with_series_growth(analytics_series),
+        "analytics_breakdowns": {
+            "revenue_sources": revenue_sources,
+            "usage_by_region": usage_by_region,
+            "event_attendance_top": event_attendance_top,
+        },
+        "filters_applied": {
+            "preset": normalized_preset,
+            "date_from": period_from_ist,
+            "date_to": period_to_ist,
+            "city_id": city_id,
+            "listing_type": listing_type,
+            "interval": resolved_interval,
+            "source_dimension": normalized_source_dimension,
+            "top_n": normalized_top_n,
+            "timezone": IST_TIMEZONE_NAME,
+        },
+    }
+
+
+async def get_admin_dashboard_drill_page(
+    db: AsyncSession,
+    *,
+    metric: str,
+    preset: str = DEFAULT_DASHBOARD_PRESET,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    city_id: UUID | None = None,
+    listing_type: ListingType | None = None,
+    interval: str | None = None,
+    source_dimension: str = DEFAULT_SOURCE_DIMENSION,
+    page: int = DEFAULT_DRILL_PAGE,
+    page_size: int = DEFAULT_DRILL_PAGE_SIZE,
+    sort_by: str | None = None,
+    sort_dir: str = "desc",
+) -> dict[str, Any]:
+    normalized_metric = ensure_valid_dashboard_metric(metric)
+    normalized_preset = ensure_valid_preset(preset)
+    normalized_source_dimension = ensure_valid_source_dimension(source_dimension)
+    normalized_page_size = normalize_page_size(page_size)
+    normalized_page = max(1, int(page))
+    normalized_sort_by, normalized_sort_dir = normalize_drill_sort(
+        normalized_metric,
+        sort_by,
+        sort_dir,
+    )
+    start_utc, end_utc = resolve_dashboard_range(
+        preset=normalized_preset,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    resolve_auto_interval(
+        start_utc=start_utc,
+        end_utc=end_utc,
+        requested_interval=interval,
+    )
+
+    if normalized_metric == "revenue_sources":
+        columns = ["key", "revenue", "bookings", "transacting_users"]
+        items, total = await admin_repository.fetch_dashboard_drill_revenue_sources(
+            db,
+            start_utc=start_utc,
+            end_utc=end_utc,
+            city_id=city_id,
+            listing_type=listing_type,
+            source_dimension=normalized_source_dimension,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            sort_by=normalized_sort_by,
+            sort_dir=normalized_sort_dir,
+        )
+    elif normalized_metric == "usage_by_region":
+        columns = ["city_name", "revenue", "bookings", "transacting_users"]
+        items, total = await admin_repository.fetch_dashboard_drill_usage_by_region(
+            db,
+            start_utc=start_utc,
+            end_utc=end_utc,
+            city_id=city_id,
+            listing_type=listing_type,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            sort_by=normalized_sort_by,
+            sort_dir=normalized_sort_dir,
+        )
+    elif normalized_metric == "event_attendance":
+        columns = [
+            "listing_title",
+            "city_name",
+            "occurrence_start",
+            "attendance",
+            "revenue",
+            "confirmed_bookings",
+        ]
+        items, total = await admin_repository.fetch_dashboard_drill_event_attendance(
+            db,
+            start_utc=start_utc,
+            end_utc=end_utc,
+            city_id=city_id,
+            listing_type=listing_type,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            sort_by=normalized_sort_by,
+            sort_dir=normalized_sort_dir,
+        )
+    else:
+        columns = ["id", "name", "email", "created_at"]
+        items, total = await admin_repository.fetch_dashboard_drill_new_users(
+            db,
+            start_utc=start_utc,
+            end_utc=end_utc,
+            page=normalized_page,
+            page_size=normalized_page_size,
+            sort_by=normalized_sort_by,
+            sort_dir=normalized_sort_dir,
+        )
+
+    total_pages = (
+        0 if total <= 0 else max((total + normalized_page_size - 1) // normalized_page_size, 1)
+    )
+    return {
+        "metric": normalized_metric,
+        "columns": columns,
+        "items": items,
+        "page": normalized_page,
+        "page_size": normalized_page_size,
+        "total": total,
+        "total_pages": total_pages,
     }
 
 

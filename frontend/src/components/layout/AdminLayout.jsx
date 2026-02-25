@@ -1,6 +1,16 @@
 import React, { useMemo } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, BookText, ClipboardList, LayoutDashboard, LogOut, MapPinned, Percent, Presentation } from "lucide-react";
+import {
+  ArrowLeft,
+  BarChart3,
+  BookText,
+  ClipboardList,
+  LayoutDashboard,
+  LogOut,
+  MapPinned,
+  Percent,
+  Presentation,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -11,6 +21,7 @@ const navItems = [
   { name: "Cities & Venues", path: "/admin/locations", icon: MapPinned },
   { name: "Bookings", path: "/admin/bookings", icon: ClipboardList },
   { name: "Offers", path: "/admin/offers", icon: Percent },
+  { name: "Analytics", path: "/admin/analytics/users", icon: BarChart3 },
   { name: "Audit Logs", path: "/admin/audit-logs", icon: BookText },
 ];
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -160,11 +160,92 @@ class AdminDashboardCategorySales(BaseModel):
     total_sales: float
 
 
+class AdminDashboardAnalyticsKpis(BaseModel):
+    new_users: int
+    user_growth_rate_pct: float | None = None
+    revenue_period: float
+    revenue_growth_rate_pct: float | None = None
+    arpu: float | None = None
+    event_attendance_total: int
+
+
+class AdminDashboardAnalyticsSeriesRow(BaseModel):
+    bucket_start: datetime
+    bucket_label: str
+    new_users: int
+    revenue: float
+    transacting_users: int
+    arpu: float | None = None
+    attendance: int
+    new_users_growth_rate_pct: float | None = None
+    revenue_growth_rate_pct: float | None = None
+
+
+class AdminDashboardRevenueSourceItem(BaseModel):
+    key: str
+    revenue: float
+    bookings: int
+    transacting_users: int
+
+
+class AdminDashboardUsageByRegionItem(BaseModel):
+    city_id: UUID | None = None
+    city_name: str
+    bookings: int
+    transacting_users: int
+    revenue: float
+
+
+class AdminDashboardEventAttendanceItem(BaseModel):
+    occurrence_id: UUID | None = None
+    listing_id: UUID | None = None
+    listing_title: str
+    city_name: str
+    occurrence_start: datetime | None = None
+    attendance: int
+    revenue: float
+    confirmed_bookings: int
+
+
+class AdminDashboardAnalyticsBreakdowns(BaseModel):
+    revenue_sources: list[AdminDashboardRevenueSourceItem] = Field(default_factory=list)
+    usage_by_region: list[AdminDashboardUsageByRegionItem] = Field(default_factory=list)
+    event_attendance_top: list[AdminDashboardEventAttendanceItem] = Field(
+        default_factory=list
+    )
+
+
+class AdminDashboardFiltersApplied(BaseModel):
+    preset: str
+    date_from: date
+    date_to: date
+    city_id: UUID | None = None
+    listing_type: ListingType | None = None
+    interval: str
+    source_dimension: str
+    top_n: int
+    timezone: str
+
+
+class AdminDashboardDrillResponse(BaseModel):
+    metric: str
+    columns: list[str]
+    items: list[dict[str, Any]]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
 class AdminDashboardResponse(BaseModel):
     stats: AdminDashboardStats
     recent_bookings: list[AdminDashboardRecentBooking]
     top_listings: list[AdminDashboardTopListing]
     category_sales: list[AdminDashboardCategorySales]
+    analytics_kpis: AdminDashboardAnalyticsKpis | None = None
+    analytics_series: list[AdminDashboardAnalyticsSeriesRow] = Field(default_factory=list)
+    analytics_breakdowns: AdminDashboardAnalyticsBreakdowns | None = None
+    filters_applied: AdminDashboardFiltersApplied | None = None
 
 
 class AdminListingListItem(BaseModel):
