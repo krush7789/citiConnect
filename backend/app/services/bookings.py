@@ -25,6 +25,7 @@ from app.repository.bookings import (
     count_offer_usage,
     expire_stale_holds,
     expire_stale_seat_locks,
+    get_active_hold_quantities_by_occurrence,
     get_active_locks_for_seats,
     get_booking,
     get_booking_idempotency,
@@ -66,10 +67,20 @@ logger = logging.getLogger(__name__)
 
 TAX_RATE = Decimal("0.18")
 HOLD_MINUTES = 10
+MAX_TICKETS_PER_BOOKING = 6
 
 
 def _decimal(value: Any) -> Decimal:
     return Decimal(str(value)).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+
+
+def _raise_ticket_limit_exceeded() -> None:
+    raise_api_error(
+        422,
+        "TICKET_LIMIT_EXCEEDED",
+        f"You can select up to {MAX_TICKETS_PER_BOOKING} tickets per booking.",
+        {"max_tickets_per_booking": MAX_TICKETS_PER_BOOKING},
+    )
 
 
 def _dt_lt(left: datetime | None, right: datetime | None) -> bool:
@@ -165,6 +176,7 @@ def _booking_scope_match(
     return booking.status in {BookingStatus.HOLD, BookingStatus.CONFIRMED} and (
         occurrence_end is None or _dt_gte(occurrence_end, now)
     )
+
 
 
 def _base_and_tax_from_breakdown(booking: Booking) -> tuple[Decimal, Decimal]:
@@ -433,6 +445,8 @@ async def create_booking_lock(
         raise_api_error(
             422, "INVALID_SEAT_INPUT", "Movie bookings require seat selection"
         )
+    if listing.type == ListingType.MOVIE and len(seat_ids) > MAX_TICKETS_PER_BOOKING:
+        _raise_ticket_limit_exceeded()
 
     existing_hold = await get_user_active_hold_for_occurrence(
         db,
@@ -444,8 +458,12 @@ async def create_booking_lock(
     if existing_hold and _lock_request_matches_booking(
         existing_hold, payload, seat_ids
     ):
-        refreshed_expiry = now + timedelta(minutes=HOLD_MINUTES)
-        existing_hold.hold_expires_at = refreshed_expiry
+        if int(existing_hold.quantity or 0) > MAX_TICKETS_PER_BOOKING:
+            _raise_ticket_limit_exceeded()
+        existing_hold_expiry = _hold_expiry(existing_hold) or (
+            now + timedelta(minutes=HOLD_MINUTES)
+        )
+        existing_hold.hold_expires_at = existing_hold_expiry
 
         if seat_ids:
             user_active_locks = await get_user_active_locks_for_occurrence(
@@ -460,13 +478,27 @@ async def create_booking_lock(
                 seat_key = user_lock.seat_id.upper()
                 if seat_key in selected_seats:
                     user_lock.status = SeatLockStatus.ACTIVE
-                    user_lock.expires_at = refreshed_expiry
+                    user_lock.expires_at = existing_hold_expiry
                 else:
                     user_lock.status = SeatLockStatus.RELEASED
 
         await db.commit()
         await db.refresh(existing_hold)
         return {"booking": await _serialize_booking(db, existing_hold, now=now)}
+
+    if existing_hold:
+        existing_hold.status = BookingStatus.EXPIRED
+        existing_hold.cancellation_reason = "Superseded by a new hold request"
+        existing_hold.hold_expires_at = now
+        user_active_locks = await get_user_active_locks_for_occurrence(
+            db,
+            occurrence_id=occurrence.id,
+            user_id=current_user.id,
+            now=now,
+            for_update=True,
+        )
+        for user_lock in user_active_locks:
+            user_lock.status = SeatLockStatus.RELEASED
 
     seat_layout = normalize_seat_layout(occurrence.seat_layout)
     current_layout_version = int(seat_layout.get("version", 1))
@@ -571,7 +603,16 @@ async def create_booking_lock(
     else:
         hold_expires_at = now + timedelta(minutes=HOLD_MINUTES)
 
-    if occurrence.capacity_remaining <= 0:
+    hold_quantities = await get_active_hold_quantities_by_occurrence(
+        db,
+        occurrence_ids=[occurrence.id],
+        now=now,
+    )
+    active_hold_quantity = hold_quantities.get(occurrence.id, 0)
+    effective_capacity_remaining = max(
+        0, int(occurrence.capacity_remaining or 0) - int(active_hold_quantity or 0)
+    )
+    if effective_capacity_remaining <= 0:
         raise_api_error(
             409, "SOLD_OUT", "No seats/tickets remaining for this occurrence"
         )
@@ -588,8 +629,20 @@ async def create_booking_lock(
 
     if normalized_quantity <= 0:
         raise_api_error(422, "VALIDATION_ERROR", "Quantity must be at least 1")
-    if occurrence.capacity_remaining < normalized_quantity:
-        raise_api_error(409, "SOLD_OUT", "Insufficient capacity for selected quantity")
+    if normalized_quantity > MAX_TICKETS_PER_BOOKING:
+        _raise_ticket_limit_exceeded()
+    if effective_capacity_remaining < normalized_quantity:
+        raise_api_error(
+            409,
+            "SOLD_OUT",
+            "Insufficient capacity for selected quantity",
+            {
+                "requested_quantity": normalized_quantity,
+                "capacity_remaining": int(occurrence.capacity_remaining or 0),
+                "held_quantity": int(active_hold_quantity or 0),
+                "effective_capacity_remaining": int(effective_capacity_remaining),
+            },
+        )
 
     venue = await get_venue(db, occurrence.venue_id)
     listing_snapshot = {
@@ -848,6 +901,8 @@ async def create_razorpay_payment_order(
         booking.status = BookingStatus.EXPIRED
         await db.commit()
         raise_api_error(400, "BOOKING_EXPIRED", "Booking hold expired")
+    if int(booking.quantity or 0) > MAX_TICKETS_PER_BOOKING:
+        _raise_ticket_limit_exceeded()
 
     amount = int(
         (
@@ -937,6 +992,8 @@ async def confirm_booking(
         booking.status = BookingStatus.EXPIRED
         await db.commit()
         raise_api_error(400, "BOOKING_EXPIRED", "Booking hold expired")
+    if int(booking.quantity or 0) > MAX_TICKETS_PER_BOOKING:
+        _raise_ticket_limit_exceeded()
 
     occurrence = await get_occurrence(db, booking.occurrence_id, for_update=True)
     if not occurrence:

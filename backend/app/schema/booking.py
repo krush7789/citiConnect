@@ -10,9 +10,9 @@ from app.models.enums import BookingStatus
 
 class BookingLockRequest(BaseModel):
     occurrence_id: UUID
-    seat_ids: list[str] | None = None
+    seat_ids: list[str] | None = Field(default=None, max_length=6)
     seat_layout_version: int | None = None
-    quantity: int | None = Field(default=None, ge=1)
+    quantity: int | None = Field(default=None, ge=1, le=6)
     ticket_breakdown: dict[str, int] | None = None
 
 

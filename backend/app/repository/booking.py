@@ -18,6 +18,24 @@ from app.utils.datetime_utils import utcnow
 HOLD_WINDOW_MINUTES = 10
 
 
+def _active_hold_predicates(reference: datetime):
+    hold_cutoff = reference - timedelta(minutes=HOLD_WINDOW_MINUTES)
+    return (
+        Booking.status == BookingStatus.HOLD,
+        Booking.hold_expires_at.is_not(None),
+        or_(
+            and_(
+                Booking.hold_expires_at >= Booking.created_at,
+                Booking.hold_expires_at > reference,
+            ),
+            and_(
+                Booking.hold_expires_at < Booking.created_at,
+                Booking.created_at > hold_cutoff,
+            ),
+        ),
+    )
+
+
 async def expire_stale_holds(db: AsyncSession, now: datetime | None = None) -> int:
     reference = now or utcnow()
     hold_cutoff = reference - timedelta(minutes=HOLD_WINDOW_MINUTES)
@@ -106,24 +124,12 @@ async def get_user_active_hold_for_occurrence(
     for_update: bool = False,
 ) -> Booking | None:
     reference = now or utcnow()
-    hold_cutoff = reference - timedelta(minutes=HOLD_WINDOW_MINUTES)
     stmt = (
         select(Booking)
         .where(
             Booking.user_id == user_id,
             Booking.occurrence_id == occurrence_id,
-            Booking.status == BookingStatus.HOLD,
-            Booking.hold_expires_at.is_not(None),
-            or_(
-                and_(
-                    Booking.hold_expires_at >= Booking.created_at,
-                    Booking.hold_expires_at > reference,
-                ),
-                and_(
-                    Booking.hold_expires_at < Booking.created_at,
-                    Booking.created_at > hold_cutoff,
-                ),
-            ),
+            *_active_hold_predicates(reference),
         )
         .order_by(Booking.hold_expires_at.desc(), Booking.created_at.desc())
         .limit(1)
@@ -131,6 +137,28 @@ async def get_user_active_hold_for_occurrence(
     if for_update:
         stmt = stmt.with_for_update()
     return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def get_active_hold_quantities_by_occurrence(
+    db: AsyncSession,
+    *,
+    occurrence_ids: list[UUID],
+    now: datetime | None = None,
+) -> dict[UUID, int]:
+    if not occurrence_ids:
+        return {}
+
+    reference = now or utcnow()
+    stmt = (
+        select(Booking.occurrence_id, func.coalesce(func.sum(Booking.quantity), 0))
+        .where(
+            Booking.occurrence_id.in_(occurrence_ids),
+            *_active_hold_predicates(reference),
+        )
+        .group_by(Booking.occurrence_id)
+    )
+    rows = (await db.execute(stmt)).all()
+    return {occurrence_id: int(quantity or 0) for occurrence_id, quantity in rows}
 
 
 async def list_user_bookings(db: AsyncSession, *, user_id: UUID) -> list[Booking]:

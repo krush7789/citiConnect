@@ -1,6 +1,19 @@
 from typing import Any
 
-def format_listing_list_item(row: Any, next_occurrences: dict[Any, Any]) -> dict[str, Any]:
+def _effective_capacity_remaining(raw_capacity: Any, hold_quantity: int | None) -> int:
+    try:
+        capacity_remaining = int(raw_capacity or 0)
+    except (TypeError, ValueError):
+        capacity_remaining = 0
+    held = max(0, int(hold_quantity or 0))
+    return max(0, capacity_remaining - held)
+
+
+def format_listing_list_item(
+    row: Any,
+    next_occurrences: dict[Any, Any],
+    hold_quantities_by_occurrence: dict[Any, int] | None = None,
+) -> dict[str, Any]:
     """
     Format a database row from `list_listings` into a standardized ListingItem dictionary.
     This encapsulates the presentation logic to keep the API controllers clean.
@@ -37,10 +50,13 @@ def format_listing_list_item(row: Any, next_occurrences: dict[Any, Any]) -> dict
     }
 
     if next_occurrence:
+        held_quantity = (hold_quantities_by_occurrence or {}).get(next_occurrence.id, 0)
         item["next_occurrence"] = {
             "id": next_occurrence.id,
             "start_time": next_occurrence.start_time,
-            "capacity_remaining": next_occurrence.capacity_remaining,
+            "capacity_remaining": _effective_capacity_remaining(
+                next_occurrence.capacity_remaining, held_quantity
+            ),
             "status": next_occurrence.status,
         }
         

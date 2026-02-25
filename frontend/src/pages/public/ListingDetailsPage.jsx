@@ -211,22 +211,32 @@ const ListingDetailsPage = () => {
           {mediaImages.length ? (
             <div className="rounded-xl border p-4 bg-card">
               <h2 className="font-semibold mb-3">{mediaTitle}</h2>
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                {mediaImages.map((url, index) => (
-                  <button
-                    key={url}
-                    type="button"
-                    onClick={() => setPreviewIndex(index)}
-                    className="relative aspect-square overflow-hidden rounded-lg border border-slate-200 hover:ring-2 hover:ring-primary transition group"
-                  >
-                    <img
-                      src={url}
-                      alt={`${listing.title} ${mediaTitle.toLowerCase()} ${index + 1}`}
-                      className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
-                      loading="lazy"
-                    />
-                  </button>
-                ))}
+              <div className="grid grid-cols-4 gap-2 max-w-md">
+                {mediaImages.slice(0, 3).map((url, index) => {
+                  const isLast = index === 2;
+                  const extraCount = mediaImages.length - 3;
+                  const showOverlay = isLast && extraCount > 0;
+                  return (
+                    <button
+                      key={url}
+                      type="button"
+                      onClick={() => setPreviewIndex(index)}
+                      className="relative aspect-square overflow-hidden rounded-lg border border-slate-200 hover:ring-2 hover:ring-primary transition group"
+                    >
+                      <img
+                        src={url}
+                        alt={`${listing.title} ${mediaTitle.toLowerCase()} ${index + 1}`}
+                        className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
+                        loading="lazy"
+                      />
+                      {showOverlay && (
+                        <span className="absolute inset-0 bg-black/50 text-white text-2xl font-bold grid place-content-center">
+                          +{extraCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ) : null}
@@ -294,7 +304,6 @@ const ListingDetailsPage = () => {
                 {listing.address}
               </p>
               <p className="inline-flex items-center gap-1">
-                <Star className="h-4 w-4" />
                 From {formatCurrency(listing.price_min, listing.currency)}
               </p>
             </div>

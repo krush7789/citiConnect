@@ -39,13 +39,6 @@ IST_TIMEZONE_NAME = "Asia/Kolkata"
 IST_TIMEZONE = ZoneInfo(IST_TIMEZONE_NAME)
 
 
-def utc_to_ist(value: datetime) -> datetime:
-    normalized = normalize_datetime(value)
-    if normalized is None:
-        return datetime.now(IST_TIMEZONE)
-    return normalized.astimezone(IST_TIMEZONE)
-
-
 def ist_start_end_utc_for_date(value: date) -> tuple[datetime, datetime]:
     start_ist = datetime.combine(value, time.min, tzinfo=IST_TIMEZONE)
     end_ist = start_ist + timedelta(days=1)

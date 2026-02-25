@@ -98,7 +98,7 @@ const VenueMap = ({ latitude, longitude, title, address, zoom = 15 }) => {
 
   return (
     <div className="space-y-2">
-      <div ref={mapContainerRef} className="h-64 w-full rounded-lg border" />
+      <div ref={mapContainerRef} className="h-64 w-full rounded-lg border relative z-0" />
       {error ? <p className="text-xs text-muted-foreground">{error}</p> : null}
     </div>
   );

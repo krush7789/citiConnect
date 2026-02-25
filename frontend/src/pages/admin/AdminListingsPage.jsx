@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import PaginationControls from "@/components/common/PaginationControls";
 import AdminDataTable from "@/components/admin/AdminDataTable";
 import { AdminEmptyState, AdminInlineState, AdminPageHeader } from "@/components/admin/AdminPagePrimitives";
-import AdminListingForm from "./components/AdminListingForm";
+import AdminListingForm from "@/components/admin/AdminListingForm";
 
 const defaultForm = {
   id: "",

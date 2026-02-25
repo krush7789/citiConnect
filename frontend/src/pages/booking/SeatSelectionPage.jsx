@@ -7,6 +7,8 @@ import { bookingService, listingService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
 import { formatCurrency, formatDateTime } from "@/lib/format";
 
+const MAX_TICKETS_PER_BOOKING = 6;
+
 const SeatSelectionPage = () => {
   const navigate = useNavigate();
   const { listingId, occurrenceId } = useParams();
@@ -82,8 +84,15 @@ const SeatSelectionPage = () => {
   const onToggleSeat = (seatId, seatState) => {
     if (seatState.state !== "AVAILABLE") return;
     setSelectedSeats((prev) => {
-      if (prev.includes(seatId)) return prev.filter((entry) => entry !== seatId);
-      if (prev.length >= 6) return prev;
+      if (prev.includes(seatId)) {
+        setError("");
+        return prev.filter((entry) => entry !== seatId);
+      }
+      if (prev.length >= MAX_TICKETS_PER_BOOKING) {
+        setError(`You can select up to ${MAX_TICKETS_PER_BOOKING} seats per booking.`);
+        return prev;
+      }
+      setError("");
       return [...prev, seatId];
     });
   };
@@ -119,7 +128,9 @@ const SeatSelectionPage = () => {
           </Button>
           <div>
             <h1 className="font-bold">Select seats</h1>
-            <p className="text-xs text-muted-foreground">{selectedSeats.length} selected</p>
+            <p className="text-xs text-muted-foreground">
+              {selectedSeats.length} selected (max {MAX_TICKETS_PER_BOOKING})
+            </p>
             {occurrence ? (
               <p className="text-xs text-muted-foreground mt-1">
                 {formatDateTime(occurrence.start_time)}

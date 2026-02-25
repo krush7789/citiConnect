@@ -31,8 +31,12 @@ const ProfileDrawer = ({ onClose }) => {
 
       <div className="p-5 border-b">
         <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold">
-            {(user?.name || "U").slice(0, 1).toUpperCase()}
+          <div className="h-12 w-12 rounded-full overflow-hidden bg-primary/10 text-primary flex items-center justify-center font-bold">
+            {user?.profile_image_url ? (
+              <img src={user.profile_image_url} alt={user?.name || "User"} className="h-full w-full object-cover" />
+            ) : (
+              <span>{(user?.name || "U").slice(0, 1).toUpperCase()}</span>
+            )}
           </div>
           <div>
             <p className="font-semibold">{user?.name || "User"}</p>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.repository.booking import (
+    get_active_hold_quantities_by_occurrence,
     count_offer_usage,
     expire_stale_holds,
     expire_stale_seat_locks,
@@ -22,6 +23,7 @@ from app.repository.booking import (
 )
 
 __all__ = [
+    "get_active_hold_quantities_by_occurrence",
     "count_offer_usage",
     "expire_stale_holds",
     "expire_stale_seat_locks",

@@ -62,10 +62,6 @@ async def recompute_popularity_for_all_listings(db: AsyncSession) -> int:
     return len(listing_ids)
 
 
-async def on_booking_state_change(
-    db: AsyncSession, occurrence_id: UUID
-) -> float | None:
-    return await recompute_popularity_by_occurrence(db, occurrence_id)
 
 
 async def on_wishlist_change(db: AsyncSession, listing_id: UUID) -> float:

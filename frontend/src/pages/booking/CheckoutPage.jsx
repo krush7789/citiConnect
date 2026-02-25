@@ -4,8 +4,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { bookingService, listingService, offerService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
-import PaymentModal from "./components/PaymentModal";
-import OfferModal from "./components/OfferModal";
+import PaymentModal from "@/components/booking/PaymentModal";
+import OfferModal from "@/components/booking/OfferModal";
 import { BOOKING_STATUS } from "@/lib/enums";
 import { formatCountdown, formatCurrency, formatDateTime, toApiDateTimeMs } from "@/lib/format";
 

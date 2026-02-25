@@ -8,9 +8,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import PaginationControls from "@/components/common/PaginationControls";
 import AdminDataTable from "@/components/admin/AdminDataTable";
 import { AdminEmptyState, AdminInlineState, AdminPageHeader } from "@/components/admin/AdminPagePrimitives";
+
+const OFFER_AVAILABILITY_KEYS = ["types", "categories", "city_ids", "listing_ids"];
+const offerAvailabilityTemplate = {
+  types: [],
+  categories: [],
+  city_ids: [],
+  listing_ids: [],
+};
 
 const initialForm = {
   code: "",
@@ -24,8 +33,35 @@ const initialForm = {
   usage_limit: "",
   user_usage_limit: "",
   is_active: true,
+  applicability_text: JSON.stringify(offerAvailabilityTemplate, null, 2),
 };
 const OFFERS_PAGE_SIZE = 20;
+
+const parseOfferAvailability = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+
+    const normalized = {};
+    OFFER_AVAILABILITY_KEYS.forEach((key) => {
+      if (!Array.isArray(parsed[key])) return;
+      const entries = [
+        ...new Set(
+          parsed[key]
+            .map((item) => String(item || "").trim())
+            .filter(Boolean)
+            .map((item) => (key === "types" || key === "categories" ? item.toUpperCase() : item))
+        ),
+      ];
+      if (entries.length) normalized[key] = entries;
+    });
+    return normalized;
+  } catch {
+    return null;
+  }
+};
 
 const validationSchema = Yup.object({
   code: Yup.string().trim().required("Code is required."),
@@ -36,6 +72,7 @@ const validationSchema = Yup.object({
   max_discount_value: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Max discount must be >= 0."),
   usage_limit: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Usage limit must be >= 0."),
   user_usage_limit: Yup.number().nullable().transform((value, original) => (original === "" ? null : value)).min(0, "Per-user limit must be >= 0."),
+  applicability_text: Yup.string().required("Offer availability metadata is required."),
 });
 
 const AdminOffersPage = () => {
@@ -76,6 +113,11 @@ const AdminOffersPage = () => {
     validationSchema,
     onSubmit: async (values) => {
       setError("");
+      const applicability = parseOfferAvailability(values.applicability_text);
+      if (applicability === null) {
+        setError("Offer availability metadata must be a valid JSON object.");
+        return;
+      }
       try {
         await createOfferMutation.mutateAsync({
           code: values.code,
@@ -89,6 +131,7 @@ const AdminOffersPage = () => {
           usage_limit: values.usage_limit === "" ? 0 : Number(values.usage_limit || 0),
           user_usage_limit: values.user_usage_limit === "" ? 0 : Number(values.user_usage_limit || 0),
           is_active: values.is_active,
+          applicability,
         });
         formik.resetForm();
         setPage(1);
@@ -287,6 +330,38 @@ const AdminOffersPage = () => {
                   />
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-xs text-muted-foreground">Offer availability metadata (JSON object)</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    formik.setFieldValue(
+                      "applicability_text",
+                      JSON.stringify(offerAvailabilityTemplate, null, 2)
+                    )
+                  }
+                >
+                  Use availability template
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Tracked keys: <span className="font-mono">types</span>, <span className="font-mono">categories</span>, <span className="font-mono">city_ids</span>, <span className="font-mono">listing_ids</span>.
+              </p>
+              <Textarea
+                name="applicability_text"
+                value={formik.values.applicability_text}
+                onChange={formik.handleChange}
+                onBlur={formik.handleBlur}
+                className="min-h-[140px] font-mono"
+              />
+              {formik.touched.applicability_text && formik.errors.applicability_text ? (
+                <p className="text-xs text-destructive mt-1">{formik.errors.applicability_text}</p>
+              ) : null}
             </div>
 
             <div className="flex items-center gap-2">

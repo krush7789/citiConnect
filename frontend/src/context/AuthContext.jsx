@@ -12,7 +12,7 @@ import LoginModal from "@/components/auth/LoginModal";
 import RegisterModal from "@/components/auth/RegisterModal";
 import ForgotPasswordModal from "@/components/auth/ForgotPasswordModal";
 import ChangePasswordModal from "@/components/auth/ChangePasswordModal";
-import { authService } from "@/api/services";
+import { authService, userService } from "@/api/services";
 import { clearStoredAuth, setStoredToken, setUnauthorizedHandler, USER_STORAGE_KEY } from "@/api/client";
 import { normalizeUser } from "@/lib/contracts";
 
@@ -64,17 +64,33 @@ export const AuthProvider = ({ children }) => {
   const isAuthenticated = Boolean(user);
   const authState = user ? "authenticated" : "anonymous";
 
+  const persistUser = useCallback((rawUser) => {
+    const normalizedUser = normalizeUser(rawUser || {});
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(normalizedUser));
+    setUser(normalizedUser);
+    return normalizedUser;
+  }, []);
+
   const persistAuth = useCallback((authPayload) => {
     const token = typeof authPayload?.access_token === "string" ? authPayload.access_token.trim() : "";
     const rawUser = authPayload?.user;
     if (!token || !isPersistedUser(rawUser)) {
       throw new Error("Invalid auth response");
     }
-    const normalizedUser = normalizeUser(rawUser);
     setStoredToken(token);
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(normalizedUser));
-    setUser(normalizedUser);
-    return normalizedUser;
+    return persistUser(rawUser);
+  }, [persistUser]);
+
+  const setCurrentUser = useCallback((nextUser) => {
+    setUser((prevUser) => {
+      const mergedUser =
+        typeof nextUser === "function"
+          ? nextUser(prevUser)
+          : { ...(prevUser || {}), ...(nextUser || {}) };
+      const normalizedUser = normalizeUser(mergedUser || {});
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(normalizedUser));
+      return normalizedUser;
+    });
   }, []);
 
   const openAuthModal = useCallback((view = "login", intent = null) => {
@@ -159,6 +175,21 @@ export const AuthProvider = ({ children }) => {
     return () => setUnauthorizedHandler(null);
   }, [handleUnauthorized]);
 
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let mounted = true;
+    userService
+      .getMe()
+      .then((profile) => {
+        if (!mounted || !profile?.id) return;
+        setCurrentUser(profile);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [isAuthenticated, setCurrentUser]);
+
   const contextValue = useMemo(
     () => ({
       user,
@@ -168,6 +199,7 @@ export const AuthProvider = ({ children }) => {
       authModalState,
       pendingIntent,
       setPendingIntent,
+      setCurrentUser,
       openAuthModal,
       closeAuthModal,
       switchAuthModal,
@@ -185,6 +217,7 @@ export const AuthProvider = ({ children }) => {
       authLoading,
       authModalState,
       pendingIntent,
+      setCurrentUser,
       openAuthModal,
       closeAuthModal,
       switchAuthModal,

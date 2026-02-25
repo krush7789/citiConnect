@@ -178,6 +178,3 @@ export const searchService = {
   search: (params = {}) => listingService.getListings(params),
 };
 
-export const miscService = {
-  getArtists: async () => [],
-};

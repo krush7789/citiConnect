@@ -19,14 +19,14 @@ import {
   SimpleDonutChart,
   SimpleLineChart,
 } from "@/components/admin/AdminSimpleCharts";
-import AdminAnalyticsFilterBar from "./analytics/AdminAnalyticsFilterBar";
+import AdminAnalyticsFilterBar from "@/components/admin/analytics/AdminAnalyticsFilterBar";
 import {
   ANALYTICS_DEFAULT_FILTERS,
   areCustomDatesComplete,
   buildAnalyticsSearchString,
   buildDashboardAnalyticsParams,
   parseAnalyticsFiltersFromSearch,
-} from "./analytics/analyticsFilters";
+} from "@/components/admin/analytics/analyticsFilters";
 
 const KPI_CARD_PAGE_SIZE = 3;
 const TOP_LISTINGS_PAGE_SIZE = 4;

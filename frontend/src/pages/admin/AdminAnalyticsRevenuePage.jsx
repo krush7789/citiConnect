@@ -15,14 +15,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
 import { SimpleBarChart, SimpleDonutChart } from "@/components/admin/AdminSimpleCharts";
-import AdminAnalyticsFilterBar from "./analytics/AdminAnalyticsFilterBar";
+import AdminAnalyticsFilterBar from "@/components/admin/analytics/AdminAnalyticsFilterBar";
 import {
   ANALYTICS_DEFAULT_FILTERS,
   areCustomDatesComplete,
   buildAnalyticsSearchString,
   buildDashboardAnalyticsParams,
   parseAnalyticsFiltersFromSearch,
-} from "./analytics/analyticsFilters";
+} from "@/components/admin/analytics/analyticsFilters";
 
 const PAGE_SIZE = 25;
 const pieChartColors = [

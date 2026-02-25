@@ -27,19 +27,3 @@ def haversine_sql_expression(
     c = 2.0 * func.atan2(func.sqrt(a), func.sqrt(func.greatest(1.0 - a, 0.0)))
     return EARTH_RADIUS_KM * c
 
-
-def haversine_km(
-    user_lat: float, user_lon: float, target_lat: float, target_lon: float
-) -> float:
-    lat1, lon1 = math.radians(user_lat), math.radians(user_lon)
-    lat2, lon2 = math.radians(target_lat), math.radians(target_lon)
-
-    d_lat = lat2 - lat1
-    d_lon = lon2 - lon1
-
-    a = (
-        math.sin(d_lat / 2) ** 2
-        + math.cos(lat1) * math.cos(lat2) * math.sin(d_lon / 2) ** 2
-    )
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(max(1 - a, 0)))
-    return EARTH_RADIUS_KM * c

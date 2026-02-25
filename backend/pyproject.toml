@@ -11,7 +11,6 @@ dependencies = [
     "fastapi>=0.129.0",
     "fastapi-pagination>=0.15.10",
     "fastapi-security>=0.1.0",
-    "pydantic-settings>=2.11.0",
     "sqlalchemy>=2.0.46",
     "uvicorn>=0.40.0",
     "cloudinary>=1.41.0",

@@ -155,7 +155,11 @@ const Navbar = () => {
               <Sheet open={profileOpen} onOpenChange={setProfileOpen}>
                 <SheetTrigger asChild>
                   <Button variant="outline" size="icon" className="rounded-full">
-                    <span className="font-semibold text-sm">{user.name.slice(0, 1).toUpperCase()}</span>
+                    <span className="font-semibold text-sm">            {user?.profile_image_url ? (
+              <img src={user.profile_image_url} alt={user?.name || "User"} className="h-full w-full object-cover" />
+            ) : (
+              <span>{(user?.name || "U").slice(0, 1).toUpperCase()}</span>
+            )}</span>
                   </Button>
                 </SheetTrigger>
                 <SheetContent className="p-0 w-[320px]">

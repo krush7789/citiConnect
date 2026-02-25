@@ -13,6 +13,7 @@ from app.models.occurrence import Occurrence
 from app.models.seat_lock import SeatLock
 from app.models.venue import Venue
 from app.repository.booking import expire_stale_seat_locks
+from app.repository.bookings import get_active_hold_quantities_by_occurrence
 from app.repository.listing import (
     get_active_seat_locks,
     get_confirmed_booked_seats,
@@ -140,6 +141,20 @@ async def fetch_active_seat_locks(
 ) -> dict[str, SeatLock]:
     reference = now or utcnow()
     return await get_active_seat_locks(db, occurrence_id, now=reference)
+
+
+async def fetch_active_hold_quantities(
+    db: AsyncSession,
+    occurrence_ids: list[UUID],
+    *,
+    now: datetime | None = None,
+) -> dict[UUID, int]:
+    reference = now or utcnow()
+    return await get_active_hold_quantities_by_occurrence(
+        db,
+        occurrence_ids=occurrence_ids,
+        now=reference,
+    )
 
 
 async def commit(db: AsyncSession) -> None:

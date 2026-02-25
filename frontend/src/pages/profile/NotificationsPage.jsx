@@ -4,7 +4,7 @@ import { notificationService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
 import { formatDateTime } from "@/lib/format";
 
-const types = ["ALL", "BOOKING", "OFFER", "SYSTEM"];
+const types = ["ALL", "BOOKING", "OFFER"];
 
 const NotificationsPage = () => {
   const { requireAuth, isAuthenticated } = useAuth();

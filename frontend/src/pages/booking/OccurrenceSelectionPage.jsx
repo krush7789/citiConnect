@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, MapPin } from "lucide-react";
+import { ArrowLeft, CalendarDays, MapPin } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
@@ -7,6 +7,8 @@ import { bookingService, listingService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
 import { LISTING_TYPE, LISTING_STATUS, OCCURRENCE_STATUS } from "@/lib/enums";
 import { formatCurrency, formatDateTime, toApiDateTimeMs } from "@/lib/format";
+
+const MAX_TICKETS_PER_BOOKING = 6;
 
 const isBookableOccurrence = (occurrence) => {
   if (!occurrence) return false;
@@ -23,6 +25,28 @@ const toPositiveInt = (value) => {
   return rounded > 0 ? rounded : null;
 };
 
+const toLocalDateKey = (timestampMs) => {
+  const date = new Date(timestampMs);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+
+const toTimeLabel = (isoString) => {
+  const timestamp = toApiDateTimeMs(isoString);
+  if (!Number.isFinite(timestamp)) return "--";
+  return new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true }).format(timestamp);
+};
+
+const capacityMeta = (occurrence) => {
+  const remaining = Math.max(0, Number(occurrence?.capacity_remaining || 0));
+  const total = Math.max(0, Number(occurrence?.capacity_total || 0));
+  if (!total) return { label: `${remaining} slots left`, className: "text-muted-foreground" };
+
+  const ratio = remaining / total;
+  if (ratio <= 0.15) return { label: `${remaining} left | Almost full`, className: "text-rose-600" };
+  if (ratio <= 0.4) return { label: `${remaining} left | Filling fast`, className: "text-amber-600" };
+  return { label: `${remaining} left | Available`, className: "text-emerald-600" };
+};
+
 const OccurrenceSelectionPage = () => {
   const navigate = useNavigate();
   const { listingId } = useParams();
@@ -31,6 +55,7 @@ const OccurrenceSelectionPage = () => {
   const [listing, setListing] = useState(null);
   const [occurrences, setOccurrences] = useState([]);
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState("");
+  const [selectedDateKey, setSelectedDateKey] = useState("");
   const [ticketQuantity, setTicketQuantity] = useState(1);
   const [ticketType, setTicketType] = useState("");
   const [loading, setLoading] = useState(true);
@@ -65,7 +90,6 @@ const OccurrenceSelectionPage = () => {
         const upcoming = (response.occurrences || []).filter(isBookableOccurrence);
         setListing(loadedListing);
         setOccurrences(upcoming);
-        if (upcoming[0]) setSelectedOccurrenceId(upcoming[0].id);
       })
       .catch((err) => {
         if (!mounted) return;
@@ -80,10 +104,88 @@ const OccurrenceSelectionPage = () => {
     };
   }, [listingId, navigate]);
 
+  const dateOptions = useMemo(() => {
+    const dateMap = new Map();
+    occurrences.forEach((occurrence) => {
+      const timestamp = toApiDateTimeMs(occurrence.start_time);
+      if (!Number.isFinite(timestamp)) return;
+      const key = toLocalDateKey(timestamp);
+      if (!dateMap.has(key)) {
+        const date = new Date(timestamp);
+        dateMap.set(key, {
+          key,
+          timestamp,
+          dateValue: date.getDate(),
+          weekdayLabel: date.toLocaleDateString("en-IN", { weekday: "short" }),
+          monthLabel: date.toLocaleDateString("en-IN", { month: "short" }).toUpperCase(),
+          longLabel: date.toLocaleDateString("en-IN", {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+          }),
+        });
+      }
+    });
+    return Array.from(dateMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+  }, [occurrences]);
+
+  useEffect(() => {
+    if (!dateOptions.length) {
+      setSelectedDateKey("");
+      return;
+    }
+    setSelectedDateKey((current) => {
+      if (current && dateOptions.some((option) => option.key === current)) return current;
+      return dateOptions[0].key;
+    });
+  }, [dateOptions]);
+
+  const selectedDateOption = useMemo(
+    () => dateOptions.find((option) => option.key === selectedDateKey) || null,
+    [dateOptions, selectedDateKey]
+  );
+
+  const visibleOccurrences = useMemo(
+    () =>
+      occurrences
+        .filter((occurrence) => {
+          const timestamp = toApiDateTimeMs(occurrence.start_time);
+          if (!Number.isFinite(timestamp) || !selectedDateKey) return false;
+          return toLocalDateKey(timestamp) === selectedDateKey;
+        })
+        .sort((left, right) => toApiDateTimeMs(left.start_time) - toApiDateTimeMs(right.start_time)),
+    [occurrences, selectedDateKey]
+  );
+
+  useEffect(() => {
+    setSelectedOccurrenceId((current) => {
+      if (!visibleOccurrences.length) return "";
+      if (visibleOccurrences.some((occurrence) => occurrence.id === current)) return current;
+      return visibleOccurrences[0].id;
+    });
+  }, [visibleOccurrences]);
+
   const selectedOccurrence = useMemo(
     () => occurrences.find((occurrence) => occurrence.id === selectedOccurrenceId) || null,
     [occurrences, selectedOccurrenceId]
   );
+
+  const groupedOccurrences = useMemo(() => {
+    const groups = new Map();
+    visibleOccurrences.forEach((occurrence) => {
+      const venueName = occurrence.venue_name || listing?.venue?.name || listing?.address || "Venue";
+      const key = String(venueName).trim() || "Venue";
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          venueName: key,
+          items: [],
+        });
+      }
+      groups.get(key).items.push(occurrence);
+    });
+    return Array.from(groups.values());
+  }, [visibleOccurrences, listing]);
 
   const ticketOptions = useMemo(() => {
     if (!selectedOccurrence?.ticket_pricing || typeof selectedOccurrence.ticket_pricing !== "object") return [];
@@ -126,8 +228,10 @@ const OccurrenceSelectionPage = () => {
   const maxTicketQuantity = useMemo(() => {
     const remaining = Number(selectedOccurrence?.capacity_remaining || 0);
     if (!Number.isFinite(remaining) || remaining <= 0) return 1;
-    if (configuredUserLimit) return Math.max(1, Math.min(configuredUserLimit, remaining));
-    return Math.max(1, Math.floor(remaining));
+    if (configuredUserLimit) {
+      return Math.max(1, Math.min(configuredUserLimit, MAX_TICKETS_PER_BOOKING, remaining));
+    }
+    return Math.max(1, Math.min(MAX_TICKETS_PER_BOOKING, Math.floor(remaining)));
   }, [configuredUserLimit, selectedOccurrence]);
 
   const estimatedTotal = useMemo(() => {
@@ -151,6 +255,7 @@ const OccurrenceSelectionPage = () => {
   const onCreateHold = async () => {
     if (!selectedOccurrence) return;
     if (!requireAuth({ type: "navigate", path: `/listings/${listingId}/occurrences` })) return;
+
     const quantity = Math.max(1, Math.min(maxTicketQuantity, Number(ticketQuantity || 1)));
     const selectedTier = selectedTicketOption?.key || "STANDARD";
 
@@ -189,59 +294,123 @@ const OccurrenceSelectionPage = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 md:px-8 py-6 pb-24">
-      <div className="flex items-center gap-3 mb-5">
+    <div className="container mx-auto max-w-6xl px-4 md:px-8 py-6 pb-24">
+      <div className="flex items-start gap-3 md:gap-4">
         <Button variant="ghost" size="icon" onClick={() => navigate(`/listings/${listingId}`)} aria-label="Go back">
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <div>
-          <h1 className="text-2xl font-bold">Select occurrence</h1>
-          <p className="text-sm text-muted-foreground">{listing.title}</p>
+        <div className="h-24 w-20 rounded-xl overflow-hidden border bg-muted shrink-0">
+          {listing.cover_image_url ? (
+            <img src={listing.cover_image_url} alt={listing.title} className="h-full w-full object-cover" />
+          ) : (
+            <div className="h-full w-full flex items-center justify-center text-sm font-semibold text-muted-foreground">
+              {listing.title?.slice(0, 1) || "L"}
+            </div>
+          )}
+        </div>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold leading-tight">{listing.title}</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {listing.category || "Listing"} | {listing.city?.name || "City"}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1 inline-flex items-center gap-1">
+            <MapPin className="h-4 w-4" />
+            {listing.venue?.name || listing.address}
+          </p>
         </div>
       </div>
 
-      <section className="space-y-3">
-        {occurrences.length === 0 ? (
+      {dateOptions.length ? (
+        <div className="mt-6 space-y-3">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+            {dateOptions.map((dateOption) => {
+              const active = dateOption.key === selectedDateKey;
+              return (
+                <button
+                  key={dateOption.key}
+                  type="button"
+                  onClick={() => setSelectedDateKey(dateOption.key)}
+                  className={`min-w-[62px] rounded-lg border px-2.5 py-1.5 text-left transition ${active
+                    ? "bg-foreground text-background border-foreground"
+                    : "bg-card hover:border-input"
+                  }`}
+                >
+                  <p className={`text-[9px] uppercase tracking-wide ${active ? "text-background/80" : "text-muted-foreground"}`}>
+                    {dateOption.monthLabel}
+                  </p>
+                  <p className="text-lg font-semibold leading-none mt-0.5">{dateOption.dateValue}</p>
+                  <p className={`text-xs mt-0.5 ${active ? "text-background/90" : "text-muted-foreground"}`}>
+                    {dateOption.weekdayLabel}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="rounded-md border border-sky-300/70 bg-sky-100 px-4 py-2 text-sm text-slate-700">
+            <span className="font-medium">Advance bookings open for shows on </span>
+            <span className="font-semibold">{selectedDateOption?.longLabel || "selected day"}.</span>
+          </div>
+        </div>
+      ) : null}
+
+      <section className="mt-5 space-y-4">
+        {visibleOccurrences.length === 0 ? (
           <div className="rounded-xl border bg-card p-5 text-sm text-muted-foreground">
-            No upcoming occurrences are available for this listing.
+            No upcoming occurrences are available for this date.
           </div>
         ) : (
-          occurrences.map((occurrence) => {
-            const active = occurrence.id === selectedOccurrenceId;
-            return (
-              <button
-                type="button"
-                key={occurrence.id}
-                onClick={() => setSelectedOccurrenceId(occurrence.id)}
-                className={`w-full text-left rounded-xl border bg-card p-4 transition ${
-                  active
-                    ? "border-primary/55 bg-primary/[0.04] shadow-[0_0_0_1px_hsl(var(--primary)/0.08)]"
-                    : "hover:border-primary/35"
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="font-semibold">{formatDateTime(occurrence.start_time)}</p>
-                    <p className="text-sm text-muted-foreground mt-1 inline-flex items-center gap-1">
-                      <MapPin className="h-4 w-4" />
-                      {occurrence.venue_name || listing.venue?.name || listing.address}
-                    </p>
-                    {occurrence.provider_sub_location ? (
-                      <p className="text-xs text-muted-foreground mt-1">{occurrence.provider_sub_location}</p>
-                    ) : null}
-                  </div>
-                  <span className={`text-xs border rounded-full px-2 py-1 ${active ? "border-primary/35 bg-primary/10" : ""}`}>
-                    {occurrence.capacity_remaining} slots left
-                  </span>
+          groupedOccurrences.map((group) => (
+            <div key={group.key} className="rounded-2xl border bg-card p-4 md:p-5 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xl font-semibold">{group.venueName}</p>
+                  <p className="text-sm text-muted-foreground mt-1">{listing.address}</p>
                 </div>
-              </button>
-            );
-          })
+                <span className="text-xs rounded-full border px-2 py-1 text-muted-foreground">
+                  {group.items.length} showtime{group.items.length > 1 ? "s" : ""}
+                </span>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {group.items.map((occurrence) => {
+                  const active = occurrence.id === selectedOccurrenceId;
+                  const capacity = capacityMeta(occurrence);
+                  return (
+                    <button
+                      key={occurrence.id}
+                      type="button"
+                      onClick={() => setSelectedOccurrenceId(occurrence.id)}
+                      className={`rounded-2xl border px-4 py-3 text-left transition ${active
+                        ? "border-input bg-muted/40"
+                        : "bg-background hover:border-foreground/25"
+                      }`}
+                    >
+                      <p className="text-2xl font-semibold leading-none">{toTimeLabel(occurrence.start_time)}</p>
+                      <p className={`text-xs mt-2 ${capacity.className}`}>{capacity.label}</p>
+                      {occurrence.provider_sub_location ? (
+                        <p className="text-xs text-muted-foreground mt-1">{occurrence.provider_sub_location}</p>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))
         )}
       </section>
 
       {selectedOccurrence ? (
-        <div className="mt-5 max-w-4xl rounded-xl border bg-card p-3 sm:p-4 space-y-3">
+        <div className="mt-5 rounded-xl border bg-card p-3 sm:p-4 space-y-3 max-w-4xl">
+          <div className="flex items-center justify-between gap-3">
+            <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              <CalendarDays className="h-4 w-4" />
+              <span>{formatDateTime(selectedOccurrence.start_time)}</span>
+            </div>
+            <span className="text-xs rounded-full border px-2 py-1 text-muted-foreground">
+              {selectedOccurrence.capacity_remaining} slots left
+            </span>
+          </div>
+
           {ticketOptions.length ? (
             <div className="grid gap-2.5 md:grid-cols-[minmax(0,1fr)_160px] md:items-center">
               <div className="space-y-1">
@@ -294,9 +463,9 @@ const OccurrenceSelectionPage = () => {
                 +
               </button>
             </div>
-            {configuredUserLimit ? (
-              <p className="text-[11px] text-muted-foreground">Select between 1 and {maxTicketQuantity} tickets.</p>
-            ) : null}
+            <p className="text-[11px] text-muted-foreground">
+              Select between 1 and {maxTicketQuantity} tickets (max {MAX_TICKETS_PER_BOOKING} per booking).
+            </p>
           </div>
 
           {selectedTicketOption ? (
@@ -311,7 +480,7 @@ const OccurrenceSelectionPage = () => {
       {actionError ? <p className="text-sm text-destructive mt-4">{actionError}</p> : null}
 
       <div className="fixed bottom-0 inset-x-0 border-t bg-card px-4 py-3">
-        <div className="container mx-auto flex items-center justify-between gap-4">
+        <div className="container mx-auto max-w-6xl flex items-center justify-between gap-4">
           <div>
             <p className="text-xs text-muted-foreground">Selected occurrence</p>
             <p className="text-sm font-medium">

@@ -47,7 +47,21 @@ def parse_listing_types(raw: str | None) -> list[ListingType] | None:
     return values or None
 
 
-def serialize_occurrence(occ, venue_name: str | None = None) -> dict[str, Any]:
+def _effective_capacity_remaining(raw_capacity: Any, hold_quantity: int | None) -> int:
+    try:
+        capacity_remaining = int(raw_capacity or 0)
+    except (TypeError, ValueError):
+        capacity_remaining = 0
+    held = max(0, int(hold_quantity or 0))
+    return max(0, capacity_remaining - held)
+
+
+def serialize_occurrence(
+    occ,
+    venue_name: str | None = None,
+    *,
+    hold_quantity: int = 0,
+) -> dict[str, Any]:
     ticket_pricing = normalize_ticket_pricing(occ.ticket_pricing)
     return {
         "id": occ.id,
@@ -57,7 +71,9 @@ def serialize_occurrence(occ, venue_name: str | None = None) -> dict[str, Any]:
         "end_time": occ.end_time,
         "provider_sub_location": occ.provider_sub_location,
         "capacity_total": occ.capacity_total,
-        "capacity_remaining": occ.capacity_remaining,
+        "capacity_remaining": _effective_capacity_remaining(
+            occ.capacity_remaining, hold_quantity
+        ),
         "status": occ.status,
         "ticket_pricing": ticket_pricing,
     }
@@ -159,7 +175,20 @@ async def get_listings_page(
     next_occurrences = await listings_repository.fetch_next_occurrences_for_listing_ids(
         db, listing_ids
     )
-    items = [format_listing_list_item(row, next_occurrences) for row in rows]
+    next_occurrence_ids = [occ.id for occ in next_occurrences.values()]
+    hold_quantities_by_occurrence = await listings_repository.fetch_active_hold_quantities(
+        db,
+        next_occurrence_ids,
+        now=utcnow(),
+    )
+    items = [
+        format_listing_list_item(
+            row,
+            next_occurrences,
+            hold_quantities_by_occurrence,
+        )
+        for row in rows
+    ]
     return build_paginated_response(items, page=page, page_size=page_size, total=total)
 
 
@@ -173,6 +202,11 @@ async def get_listing_detail_by_id(
     listing, city, venue = record
     occurrences = await listings_repository.fetch_occurrences_for_listing(
         db, listing_id=listing_id, date_from=None, date_to=None
+    )
+    hold_quantities_by_occurrence = await listings_repository.fetch_active_hold_quantities(
+        db,
+        [occ.id for occ in occurrences],
+        now=utcnow(),
     )
     venue_name_map = await listings_repository.fetch_venue_name_map_for_occurrences(
         db, occurrences
@@ -215,7 +249,11 @@ async def get_listing_detail_by_id(
             "updated_at": listing.updated_at,
         },
         "occurrences": [
-            serialize_occurrence(occ, venue_name_map.get(occ.venue_id))
+            serialize_occurrence(
+                occ,
+                venue_name_map.get(occ.venue_id),
+                hold_quantity=hold_quantities_by_occurrence.get(occ.id, 0),
+            )
             for occ in occurrences
         ],
     }
@@ -238,12 +276,21 @@ async def get_listing_occurrences_by_listing_id(
         date_from=to_start_of_day(date_from),
         date_to=to_end_of_day(date_to),
     )
+    hold_quantities_by_occurrence = await listings_repository.fetch_active_hold_quantities(
+        db,
+        [occ.id for occ in occurrences],
+        now=utcnow(),
+    )
     venue_name_map = await listings_repository.fetch_venue_name_map_for_occurrences(
         db, occurrences
     )
     return {
         "items": [
-            serialize_occurrence(occ, venue_name_map.get(occ.venue_id))
+            serialize_occurrence(
+                occ,
+                venue_name_map.get(occ.venue_id),
+                hold_quantity=hold_quantities_by_occurrence.get(occ.id, 0),
+            )
             for occ in occurrences
         ]
     }

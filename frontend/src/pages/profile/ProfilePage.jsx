@@ -36,7 +36,7 @@ const emptyProfileValues = {
 };
 
 const ProfilePage = () => {
-  const { requireAuth, isAuthenticated, user, switchAuthModal } = useAuth();
+  const { requireAuth, isAuthenticated, user, setCurrentUser, switchAuthModal } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -59,6 +59,7 @@ const ProfilePage = () => {
           phone: updated.phone || "",
           profile_image_url: updated.profile_image_url || "",
         };
+        setCurrentUser(updated);
         setProfileInitialValues(nextValues);
         formik.setValues(nextValues, false);
         setMessage("Profile updated successfully.");
@@ -81,6 +82,7 @@ const ProfilePage = () => {
       .getMe()
       .then((me) => {
         if (!mounted) return;
+        setCurrentUser(me);
         setProfileInitialValues({
           name: me.name || "",
           phone: me.phone || "",
@@ -98,7 +100,7 @@ const ProfilePage = () => {
     return () => {
       mounted = false;
     };
-  }, [isAuthenticated, requireAuth]);
+  }, [isAuthenticated, requireAuth, setCurrentUser]);
 
   const profileCompletion = useMemo(() => {
     let score = 0;
