@@ -2,7 +2,8 @@ import React, { useMemo } from "react";
 
 const stateClassMap = {
   AVAILABLE: "bg-white border-emerald-500 text-emerald-700 hover:bg-emerald-50",
-  HELD: "bg-amber-100 border-amber-300 text-amber-700 cursor-not-allowed",
+  HELD: "bg-amber-300 border-amber-400 text-amber-900 cursor-not-allowed",
+  LOCKED: "bg-amber-300 border-amber-400 text-amber-900 cursor-not-allowed",
   BOOKED: "bg-zinc-200 border-zinc-300 text-zinc-500 cursor-not-allowed",
 };
 
@@ -75,7 +76,7 @@ const SeatMap = ({ seatMap, selectedSeats, onToggleSeat }) => {
             Selected
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded border border-amber-300 bg-amber-100" />
+            <span className="h-3 w-3 rounded border border-amber-400 bg-amber-300" />
             Held
           </span>
           <span className="inline-flex items-center gap-1">

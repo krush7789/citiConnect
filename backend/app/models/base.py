@@ -10,13 +10,13 @@ class UUIDPrimaryKeyMixin:
 
 class CreatedAtMixin:
     created_at = Column(
-        DateTime(), nullable=False, server_default=func.now()
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 
 class TimestampMixin(CreatedAtMixin):
     updated_at = Column(
-        DateTime(),
+        DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),

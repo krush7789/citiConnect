@@ -26,7 +26,7 @@ class SeatLock(Base, UUIDPrimaryKeyMixin, CreatedAtMixin):
         PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
 
-    expires_at = Column(DateTime(), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     status = Column(
         Enum(SeatLockStatus, name="seat_lock_status"),
         nullable=False,

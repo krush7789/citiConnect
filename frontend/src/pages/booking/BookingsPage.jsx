@@ -1,24 +1,28 @@
 import React, { useEffect, useState } from "react";
 import { CalendarDays, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { bookingService, listingService } from "@/api/services";
+import { bookingService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
 import { BOOKING_STATUS } from "@/lib/enums";
-import { formatCurrency, formatDateTime } from "@/lib/format";
+import { formatCurrency, formatDateTime, toApiDateTimeMs } from "@/lib/format";
 
 const scopes = [
   { label: "Upcoming", value: "upcoming" },
   { label: "Past", value: "past" },
   { label: "Cancelled", value: "cancelled" },
 ];
+const cancelledStatuses = new Set([
+  BOOKING_STATUS.CANCELLED,
+  BOOKING_STATUS.FAILED,
+]);
 
 const BookingsPage = () => {
   const navigate = useNavigate();
   const { requireAuth, isAuthenticated } = useAuth();
   const [scope, setScope] = useState("upcoming");
   const [bookings, setBookings] = useState([]);
-  const [occurrencesById, setOccurrencesById] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!requireAuth({ type: "navigate", path: "/bookings" })) {
@@ -28,23 +32,43 @@ const BookingsPage = () => {
 
     let mounted = true;
     setLoading(true);
+    setError("");
     bookingService
       .getBookings({ scope, page: 1, page_size: 30 })
-      .then(async (response) => {
+      .then((response) => {
         if (!mounted) return;
-        setBookings(response.items || []);
+        const rows = response.items || [];
+        const nowMs = Date.now();
+        const scopedRows = rows.filter((booking) => {
+          if (booking.status === BOOKING_STATUS.HOLD) return false;
 
-        const uniqueListingIds = [...new Set((response.items || []).map((item) => item.listing_snapshot?.listing_id).filter(Boolean))];
-        const occurrenceMap = {};
-        await Promise.all(
-          uniqueListingIds.map(async (listingId) => {
-            const listing = await listingService.getListingById(listingId);
-            (listing.occurrences || []).forEach((occ) => {
-              occurrenceMap[occ.id] = occ;
-            });
-          })
-        );
-        if (mounted) setOccurrencesById(occurrenceMap);
+          const referenceMs = toApiDateTimeMs(
+            booking.occurrence_end_time || booking.occurrence_start_time
+          );
+          const hasReferenceTime = Number.isFinite(referenceMs);
+
+          if (scope === "past") {
+            return (
+              booking.status === BOOKING_STATUS.CONFIRMED &&
+              hasReferenceTime &&
+              referenceMs < nowMs
+            );
+          }
+
+          if (scope === "cancelled") {
+            return cancelledStatuses.has(booking.status);
+          }
+
+          return (
+            booking.status === BOOKING_STATUS.CONFIRMED &&
+            (!hasReferenceTime || referenceMs >= nowMs)
+          );
+        });
+        setBookings(scopedRows);
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        setError(err?.normalized?.message || "Unable to load bookings.");
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -83,12 +107,12 @@ const BookingsPage = () => {
       </div>
 
       {loading ? <p className="text-sm text-muted-foreground">Loading bookings...</p> : null}
+      {!loading && error ? <p className="text-sm text-destructive mb-4">{error}</p> : null}
       {!loading && bookings.length === 0 ? (
         <div className="rounded-xl border p-6 text-sm text-muted-foreground">No bookings found for this tab.</div>
       ) : (
         <div className="space-y-3">
           {bookings.map((booking) => {
-            const occurrence = occurrencesById[booking.occurrence_id];
             const isCancelled = booking.status === BOOKING_STATUS.CANCELLED;
             const cancellationReason = String(booking.cancellation_reason || "").trim();
             return (
@@ -109,7 +133,9 @@ const BookingsPage = () => {
                 <div className="mt-3 text-sm text-muted-foreground space-y-1">
                   <p className="inline-flex items-center gap-1">
                     <CalendarDays className="h-4 w-4" />
-                    {occurrence ? formatDateTime(occurrence.start_time) : "--"}
+                    {booking.occurrence_start_time
+                      ? formatDateTime(booking.occurrence_start_time)
+                      : "--"}
                   </p>
                   <p>
                     Qty: {booking.quantity} | Amount: {formatCurrency(booking.final_price, booking.currency)}

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Loader2, Mail, MoonStar, Phone, ShieldCheck, ShieldX, Sun, UserRound } from "lucide-react";
+import { Camera, Loader2, Mail, Phone, ShieldCheck, ShieldX, UserRound } from "lucide-react";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/context/AuthContext";
-import { useTheme } from "@/context/ThemeContext";
 import { mediaService, userService } from "@/api/services";
 
 const roleText = (role) => {
@@ -38,7 +37,6 @@ const emptyProfileValues = {
 
 const ProfilePage = () => {
   const { requireAuth, isAuthenticated, user, switchAuthModal } = useAuth();
-  const { isDarkMode, toggleDarkMode } = useTheme();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -245,12 +243,6 @@ const ProfilePage = () => {
                       Inactive
                     </span>
                   )}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Password state</span>
-                <Badge variant={user?.is_temporary_password ? "destructive" : "outline"}>
-                  {user?.is_temporary_password ? "Temporary password" : "Normal password"}
                 </Badge>
               </div>
             </CardContent>

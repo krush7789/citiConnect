@@ -13,10 +13,12 @@ from app.repository.booking import (
     get_occurrences_by_ids,
     get_offer_by_code,
     get_offer_by_id,
+    get_offers_by_ids,
     get_user_active_hold_for_occurrence,
     get_user_active_locks_for_occurrence,
     get_venue,
     list_user_bookings,
+    list_user_bookings_scoped,
 )
 
 __all__ = [
@@ -32,8 +34,10 @@ __all__ = [
     "get_occurrences_by_ids",
     "get_offer_by_code",
     "get_offer_by_id",
+    "get_offers_by_ids",
     "get_user_active_hold_for_occurrence",
     "get_user_active_locks_for_occurrence",
     "get_venue",
     "list_user_bookings",
+    "list_user_bookings_scoped",
 ]

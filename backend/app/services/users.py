@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
-from uuid import UUID
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import raise_api_error
@@ -19,20 +15,6 @@ def normalize_optional_text(value: str | None) -> str | None:
     return cleaned or None
 
 
-async def user_stats(db: AsyncSession, user_id: UUID) -> dict[str, Any]:
-    now = datetime.now()
-    total_bookings = await users_repository.count_total_bookings(db, user_id)
-    upcoming_bookings = await users_repository.count_upcoming_confirmed_bookings(
-        db, user_id, now=now
-    )
-    total_spent = await users_repository.sum_confirmed_total_spent(db, user_id)
-    return {
-        "total_bookings": total_bookings,
-        "upcoming_bookings": upcoming_bookings,
-        "total_spent": float(total_spent),
-    }
-
-
 async def serialize_user(db: AsyncSession, user: User) -> dict[str, Any]:
     return {
         "id": user.id,
@@ -42,8 +24,6 @@ async def serialize_user(db: AsyncSession, user: User) -> dict[str, Any]:
         "profile_image_url": user.profile_image_url,
         "role": user.role.value,
         "is_active": bool(user.is_active),
-        "is_temporary_password": bool(user.is_temporary_password),
-        "stats": await user_stats(db, user.id),
     }
 
 

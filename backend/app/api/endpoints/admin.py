@@ -70,7 +70,7 @@ async def get_admin_listings(
     city: str | None = Query(default=None),
     q: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=500),
+    page_size: int = Query(default=20, ge=1, le=100),
     _: object = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -144,7 +144,7 @@ async def get_admin_occurrences(
     status: str | None = Query(default=None),
     q: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=500),
+    page_size: int = Query(default=20, ge=1, le=100),
     _: object = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -217,7 +217,7 @@ async def get_admin_bookings(
     listing: str | None = Query(default=None),
     user: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=500),
+    page_size: int = Query(default=20, ge=1, le=100),
     _: object = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -238,7 +238,7 @@ async def get_admin_offers(
     is_active: bool | None = Query(default=None),
     code: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=500),
+    page_size: int = Query(default=20, ge=1, le=100),
     _: object = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -284,7 +284,7 @@ async def get_admin_audit_logs(
     action: str | None = Query(default=None),
     entity_type: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=500),
+    page_size: int = Query(default=20, ge=1, le=100),
     _: object = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):

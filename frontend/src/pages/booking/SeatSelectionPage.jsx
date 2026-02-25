@@ -100,9 +100,12 @@ const SeatSelectionPage = () => {
         seat_ids: selectedSeats,
         seat_layout_version: seatMap?.version,
       });
+      if (!booking?.id || booking.id === "booking-missing") {
+        throw new Error("Unable to start booking session. Please try again.");
+      }
       navigate(`/checkout/${booking.id}`);
     } catch (err) {
-      setError(err.normalized?.message || "Unable to create hold for selected seats.");
+      setError(err?.normalized?.message || err?.message || "Unable to create hold for selected seats.");
       setSubmitting(false);
     }
   };

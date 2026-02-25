@@ -1,26 +1,28 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { MapPin, Star } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
-import api from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select } from "@/components/ui/select";
 import VenueMap from "@/components/domain/VenueMap";
-import { bookingService, listingService } from "@/api/services";
+import { listingService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
 import { LISTING_STATUS, LISTING_TYPE, OCCURRENCE_STATUS } from "@/lib/enums";
-import { formatCurrency, formatDateTime } from "@/lib/format";
+import { formatCurrency, formatDateTime, toApiDateTimeMs } from "@/lib/format";
 
-const toNumber = (value) => {
+const toCoordinate = (value, min, max) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < min || parsed > max) return null;
+  return parsed;
 };
 
 const isOccurrenceBookable = (occurrence) => {
   if (!occurrence) return false;
   if (occurrence.status !== OCCURRENCE_STATUS.SCHEDULED) return false;
   if (Number(occurrence.capacity_remaining) <= 0) return false;
-  const reference = new Date(occurrence.end_time || occurrence.start_time).getTime();
+  const reference = toApiDateTimeMs(occurrence.end_time || occurrence.start_time);
   return !Number.isNaN(reference) && reference >= Date.now();
 };
 
@@ -54,8 +56,7 @@ const toMetadataRows = (listing) => {
     return [
       ["Cuisine", metadata.cuisine],
       ["Avg cost for two", metadata.avg_cost_for_two ? formatCurrency(metadata.avg_cost_for_two, "INR") : null],
-      ["Rating", metadata.rating ? `${metadata.rating}/5` : null],
-      ["Features", Array.isArray(metadata.features) ? metadata.features.join(", ") : null],
+      ["Facilities", Array.isArray(metadata.features) ? metadata.features.join(", ") : null],
       ["Opening Hours", metadata.opening_hours],
       ["Dress Code", metadata.dress_code],
     ].filter((row) => row[1]);
@@ -77,12 +78,9 @@ const ListingDetailsPage = () => {
   const [listing, setListing] = useState(null);
   const [occurrences, setOccurrences] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [bookingLoading, setBookingLoading] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
   const [mapCoordinates, setMapCoordinates] = useState(null);
   const [error, setError] = useState("");
-  const [ticketQuantity, setTicketQuantity] = useState(1);
-  const [ticketType, setTicketType] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -111,133 +109,20 @@ const ListingDetailsPage = () => {
   }, [listingId]);
 
   useEffect(() => {
-    const venueLat = toNumber(listing?.venue?.latitude);
-    const venueLon = toNumber(listing?.venue?.longitude);
+    const venueLat = toCoordinate(listing?.venue?.latitude, -90, 90);
+    const venueLon = toCoordinate(listing?.venue?.longitude, -180, 180);
     if (venueLat !== null && venueLon !== null) {
       setMapCoordinates({ latitude: venueLat, longitude: venueLon });
-      setLocationLoading(false);
-      return undefined;
-    }
-
-    const address = String(listing?.address || "").trim();
-    if (!address) {
+    } else {
       setMapCoordinates(null);
-      setLocationLoading(false);
-      return undefined;
     }
-
-    let cancelled = false;
-    const controller = new AbortController();
-
-    const geocodeAddress = async () => {
-      setMapCoordinates(null);
-      setLocationLoading(true);
-      try {
-        const backendResponse = await api.get("/geocode", {
-          params: { q: address },
-          signal: controller.signal,
-        });
-        const lat = toNumber(backendResponse.data?.latitude);
-        const lon = toNumber(backendResponse.data?.longitude);
-        if (!cancelled && lat !== null && lon !== null) {
-          setMapCoordinates({ latitude: lat, longitude: lon });
-          return;
-        }
-      } catch {
-        // Ignore and try direct Nominatim fallback.
-      }
-
-      try {
-        const fallbackResponse = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(address)}`,
-          {
-            signal: controller.signal,
-            headers: { Accept: "application/json" },
-          }
-        );
-        const fallbackPayload = await fallbackResponse.json();
-        const firstResult = Array.isArray(fallbackPayload) ? fallbackPayload[0] : null;
-        const lat = toNumber(firstResult?.lat);
-        const lon = toNumber(firstResult?.lon);
-        if (!cancelled && lat !== null && lon !== null) {
-          setMapCoordinates({ latitude: lat, longitude: lon });
-          return;
-        }
-      } catch {
-        // Ignore; map section will show fallback text.
-      }
-
-      if (!cancelled) {
-        setMapCoordinates(null);
-      }
-    };
-
-    geocodeAddress().finally(() => {
-      if (!cancelled) setLocationLoading(false);
-    });
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [listing?.address, listing?.venue?.latitude, listing?.venue?.longitude]);
+    setLocationLoading(false);
+  }, [listing?.venue?.latitude, listing?.venue?.longitude]);
 
   const selectedOccurrence = useMemo(() => {
     const firstBookable = occurrences.find((occurrence) => isOccurrenceBookable(occurrence));
     return firstBookable || occurrences[0] || null;
   }, [occurrences]);
-
-  const ticketOptions = useMemo(() => {
-    if (!selectedOccurrence || listing?.type === LISTING_TYPE.MOVIE) return [];
-    if (!selectedOccurrence.ticket_pricing || typeof selectedOccurrence.ticket_pricing !== "object") return [];
-
-    return Object.entries(selectedOccurrence.ticket_pricing)
-      .map(([rawKey, rawPrice]) => ({
-        key: String(rawKey || "").trim().toUpperCase(),
-        label: String(rawKey || "")
-          .trim()
-          .replace(/_/g, " "),
-        price: Number(rawPrice || 0),
-      }))
-      .filter((entry) => entry.key && Number.isFinite(entry.price))
-      .sort((a, b) => a.price - b.price);
-  }, [selectedOccurrence, listing?.type]);
-
-  const maxTicketQuantity = useMemo(() => {
-    if (!selectedOccurrence || listing?.type === LISTING_TYPE.MOVIE) return 1;
-    const remaining = Number(selectedOccurrence.capacity_remaining || 0);
-    if (!Number.isFinite(remaining) || remaining <= 0) return 1;
-    return Math.max(1, Math.min(10, remaining));
-  }, [selectedOccurrence, listing?.type]);
-
-  const selectedTicketOption = useMemo(() => {
-    if (!ticketOptions.length) return null;
-    return ticketOptions.find((entry) => entry.key === ticketType) || ticketOptions[0];
-  }, [ticketOptions, ticketType]);
-
-  const estimatedTotal = useMemo(() => {
-    if (listing?.type === LISTING_TYPE.MOVIE || !selectedTicketOption) return 0;
-    return selectedTicketOption.price * Math.max(1, ticketQuantity);
-  }, [listing?.type, selectedTicketOption, ticketQuantity]);
-
-  useEffect(() => {
-    if (!selectedOccurrence || listing?.type === LISTING_TYPE.MOVIE) {
-      setTicketQuantity(1);
-      setTicketType("");
-      return;
-    }
-
-    setTicketQuantity((prev) => {
-      const safePrev = Number.isFinite(Number(prev)) ? Number(prev) : 1;
-      return Math.max(1, Math.min(maxTicketQuantity, safePrev));
-    });
-
-    if (ticketOptions.length) {
-      setTicketType((prev) => (ticketOptions.some((entry) => entry.key === prev) ? prev : ticketOptions[0].key));
-    } else {
-      setTicketType("");
-    }
-  }, [selectedOccurrence, listing?.type, maxTicketQuantity, ticketOptions]);
 
   const canBookListing = useMemo(() => {
     if (!listing) return false;
@@ -253,31 +138,17 @@ const ListingDetailsPage = () => {
   const onBook = async () => {
     if (!listing) return;
     if (!canBookListing) return;
-
-    if (!requireAuth({ type: "navigate", path: `/listings/${listingId}` })) return;
+    const targetPath =
+      listing.type === LISTING_TYPE.MOVIE
+        ? `/listings/${listing.id}/showtimes`
+        : `/listings/${listing.id}/occurrences`;
+    if (!requireAuth({ type: "navigate", path: targetPath })) return;
 
     if (listing.type === LISTING_TYPE.MOVIE) {
       navigate(`/listings/${listing.id}/showtimes`);
       return;
     }
-
-    if (!selectedOccurrence) return;
-    const quantity = Math.max(1, Math.min(maxTicketQuantity, Number(ticketQuantity || 1)));
-    const selectedTier = selectedTicketOption?.key || "STANDARD";
-
-    setBookingLoading(true);
-    try {
-      const booking = await bookingService.createLock({
-        occurrence_id: selectedOccurrence.id,
-        quantity,
-        ticket_breakdown: { [selectedTier]: quantity },
-      });
-      navigate(`/checkout/${booking.id}`);
-    } catch (err) {
-      setError(err.normalized?.message || "Unable to create booking hold.");
-    } finally {
-      setBookingLoading(false);
-    }
+    navigate(`/listings/${listing.id}/occurrences`);
   };
 
   if (loading) {
@@ -366,8 +237,8 @@ const ListingDetailsPage = () => {
             {!mapCoordinates && locationLoading ? (
               <p className="text-sm text-muted-foreground">Locating venue on map...</p>
             ) : null}
-            {!mapCoordinates && !locationLoading ? (
-              <p className="text-sm text-muted-foreground">Map is unavailable for this listing.</p>
+          {!mapCoordinates && !locationLoading ? (
+              <p className="text-sm text-muted-foreground">To be announced.</p>
             ) : null}
           </div>
           <div className="rounded-xl border p-4 bg-card">
@@ -389,59 +260,10 @@ const ListingDetailsPage = () => {
           </p>
           <p className="text-sm mt-1">Starting at {formatCurrency(listing.price_min, listing.currency)}</p>
           {listing.type !== LISTING_TYPE.MOVIE ? (
-            <div className="mt-4 rounded-lg border p-3 space-y-3">
-              {ticketOptions.length ? (
-                <div className="space-y-1">
-                  <label htmlFor="ticket-tier" className="text-xs font-medium text-muted-foreground">
-                    Ticket type
-                  </label>
-                  <Select
-                    id="ticket-tier"
-                    value={selectedTicketOption?.key || ""}
-                    onChange={(event) => setTicketType(event.target.value)}
-                    size="sm"
-                  >
-                    {ticketOptions.map((option) => (
-                      <option key={option.key} value={option.key}>
-                        {option.label} - {formatCurrency(option.price, listing.currency)}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">Single ticket pricing applies for this listing.</p>
-              )}
-
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">Quantity</p>
-                <div className="flex items-center justify-between rounded-md border border-input bg-background px-2 py-1.5 shadow-sm">
-                  <button
-                    type="button"
-                    onClick={() => setTicketQuantity((prev) => Math.max(1, Number(prev || 1) - 1))}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-input bg-muted/30 text-sm font-semibold transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={!canBookListing || ticketQuantity <= 1}
-                  >
-                    -
-                  </button>
-                  <span className="min-w-10 text-center text-sm font-semibold">{ticketQuantity}</span>
-                  <button
-                    type="button"
-                    onClick={() => setTicketQuantity((prev) => Math.min(maxTicketQuantity, Number(prev || 1) + 1))}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-input bg-muted/30 text-sm font-semibold transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={!canBookListing || ticketQuantity >= maxTicketQuantity}
-                  >
-                    +
-                  </button>
-                </div>
-                {selectedOccurrence ? (
-                  <p className="text-[11px] text-muted-foreground">Capacity left: {selectedOccurrence.capacity_remaining}</p>
-                ) : null}
-              </div>
-
-              <p className="text-xs text-muted-foreground">Seat selection is only required for movie bookings.</p>
-              {selectedTicketOption ? (
-                <p className="text-sm font-medium">Estimated total: {formatCurrency(estimatedTotal, listing.currency)}</p>
-              ) : null}
+            <div className="mt-4 rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">
+                Select occurrence, ticket type, and quantity on the next step.
+              </p>
             </div>
           ) : null}
           {!canBookListing ? (
@@ -449,14 +271,8 @@ const ListingDetailsPage = () => {
               This listing is currently not bookable. Please check again later.
             </p>
           ) : null}
-          <Button className="w-full mt-4" onClick={onBook} disabled={!canBookListing || bookingLoading}>
-            {bookingLoading
-              ? "Creating hold..."
-              : listing.type === LISTING_TYPE.MOVIE
-                ? "Book tickets"
-                : listing.type === LISTING_TYPE.RESTAURANT
-                  ? "Reserve a Table"
-                  : "Continue"}
+          <Button className="w-full mt-4" onClick={onBook} disabled={!canBookListing}>
+            {listing.type === LISTING_TYPE.MOVIE ? "Book tickets" : "Select occurrence"}
           </Button>
         </aside>
       </div>
@@ -465,4 +281,3 @@ const ListingDetailsPage = () => {
 };
 
 export default ListingDetailsPage;
-

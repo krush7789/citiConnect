@@ -34,7 +34,12 @@ async def get_current_user(
     if not user_id:
         raise_api_error(401, "UNAUTHORIZED", "Invalid token payload")
 
-    user = await get_user_by_id(db, UUID(user_id))
+    try:
+        user_uuid = UUID(str(user_id))
+    except (TypeError, ValueError):
+        raise_api_error(401, "UNAUTHORIZED", "Invalid token payload")
+
+    user = await get_user_by_id(db, user_uuid)
     if not user or not user.is_active:
         raise_api_error(401, "UNAUTHORIZED", "User not found or inactive")
 
@@ -55,7 +60,11 @@ async def get_optional_current_user(
         user_id = payload.get("sub")
         if not user_id:
             return None
-        user = await get_user_by_id(db, UUID(user_id))
+        try:
+            user_uuid = UUID(str(user_id))
+        except (TypeError, ValueError):
+            return None
+        user = await get_user_by_id(db, user_uuid)
         return user if user and user.is_active else None
     except Exception:
         return None

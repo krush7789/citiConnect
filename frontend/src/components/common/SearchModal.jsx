@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { searchService } from "@/api/services";
+import useSelectedCity from "@/hooks/useSelectedCity";
 import { LISTING_TYPE } from "@/lib/enums";
 
 const categories = [
@@ -17,6 +18,7 @@ const categories = [
 
 const SearchModal = ({ onClose }) => {
   const navigate = useNavigate();
+  const cityId = useSelectedCity();
   const [query, setQuery] = useState("");
   const [activeType, setActiveType] = useState("");
   const [results, setResults] = useState([]);
@@ -30,7 +32,7 @@ const SearchModal = ({ onClose }) => {
   useEffect(() => {
     let mounted = true;
     const hasSearchInput = Boolean(query.trim()) || Boolean(activeType);
-    if (!hasSearchInput) {
+    if (!hasSearchInput || !cityId) {
       setLoading(false);
       setResults([]);
       return () => {
@@ -42,6 +44,7 @@ const SearchModal = ({ onClose }) => {
       setLoading(true);
       try {
         const response = await searchService.search({
+          city_id: cityId || undefined,
           q: query || undefined,
           types: activeType || undefined,
           page: 1,
@@ -59,7 +62,7 @@ const SearchModal = ({ onClose }) => {
       mounted = false;
       clearTimeout(timer);
     };
-  }, [query, activeType]);
+  }, [query, activeType, cityId]);
 
   const goToListing = (id) => {
     navigate(`/listings/${id}`);
@@ -104,24 +107,6 @@ const SearchModal = ({ onClose }) => {
           </Badge>
         ))}
       </div>
-
-      {!query ? (
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Recent searches</p>
-          <div className="flex flex-wrap gap-2">
-            {recentSearches.map((term) => (
-              <button
-                key={term}
-                type="button"
-                onClick={() => setQuery(term)}
-                className="rounded-full border px-3 py-1 text-sm hover:bg-muted"
-              >
-                {term}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
 
       <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
         {loading ? <p className="text-sm text-muted-foreground">Searching...</p> : null}

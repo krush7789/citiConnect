@@ -26,8 +26,8 @@ class Occurrence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         PGUUID(as_uuid=True), ForeignKey("cities.id"), nullable=False, index=True
     )
 
-    start_time = Column(DateTime(), nullable=False)
-    end_time = Column(DateTime(), nullable=True)
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=True)
 
     provider_sub_location = Column(String(180), nullable=True)
     capacity_total = Column(Integer, nullable=False)

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import NotificationType
@@ -83,14 +83,12 @@ async def mark_all_notifications_read(
     user_id: UUID,
 ) -> int:
     stmt = (
-        select(Notification)
+        update(Notification)
         .where(
             Notification.user_id == user_id,
             Notification.is_read.is_(False),
         )
-        .order_by(Notification.created_at.desc())
+        .values(is_read=True)
     )
-    items = (await db.execute(stmt)).scalars().all()
-    for item in items:
-        item.is_read = True
-    return len(items)
+    result = await db.execute(stmt)
+    return int(result.rowcount or 0)

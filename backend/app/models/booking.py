@@ -59,7 +59,7 @@ class Booking(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     payment_ref = Column(String(150), nullable=True)
 
     cancellation_reason = Column(String(250), nullable=True)
-    hold_expires_at = Column(DateTime(), nullable=True)
+    hold_expires_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="bookings")
     occurrence = relationship("Occurrence", back_populates="bookings")

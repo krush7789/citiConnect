@@ -7,6 +7,8 @@ import useListings from "@/hooks/useListings";
 import useSelectedCity from "@/hooks/useSelectedCity";
 import useUserLocation from "@/hooks/useUserLocation";
 import useWishlistToggle from "@/hooks/useWishlistToggle";
+import { cn } from "@/lib/utils";
+
 const specials = [
   {
     title: "Signature packages",
@@ -32,6 +34,205 @@ const sortOptions = [
   { value: "newest", label: "Newest" },
   { value: "distance", label: "Distance" },
 ];
+
+const shellClassNames = {
+  page: "relative min-h-screen overflow-x-clip bg-[#efedf8] pb-16 dark:bg-[radial-gradient(120%_120%_at_50%_-10%,rgba(109,40,217,0.35),rgba(17,24,39,1)_45%,rgba(3,7,18,1)_100%)]",
+  container: "container mx-auto px-4 md:px-8",
+  sectionTitle: "text-center text-4xl font-black text-slate-900 md:text-5xl dark:text-violet-200",
+  sectionUnderline: "mx-auto mt-3 h-1 -rotate-1 rounded-full bg-violet-500/90 dark:bg-violet-300",
+  infoState:
+    "rounded-lg border border-violet-200/75 bg-violet-50/85 p-5 text-sm text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/25 dark:text-violet-200/85",
+  tape: "absolute -top-1 left-1/2 z-10 h-3 w-10 -translate-x-1/2 -rotate-6 bg-zinc-400/50 dark:bg-violet-200/20",
+  frameShadow: "absolute inset-0 translate-x-[5px] translate-y-[5px] bg-black/90",
+};
+
+const getRotationClass = (index, evenRotation, oddRotation) => (index % 2 === 0 ? evenRotation : oddRotation);
+
+const getListingImageUrl = (listing) =>
+  (typeof listing?.cover_image_url === "string" && listing.cover_image_url.trim()) ||
+  (typeof listing?.gallery_image_urls?.[0] === "string" && listing.gallery_image_urls[0].trim()) ||
+  null;
+
+const DecorativeStar = ({ className }) => (
+  <span
+    aria-hidden="true"
+    className={cn(
+      "pointer-events-none absolute hidden text-4xl text-violet-500/70 md:block dark:text-violet-300/75",
+      className
+    )}
+  >
+    *
+  </span>
+);
+
+const SectionHeading = ({ title, underlineWidth }) => (
+  <>
+    <h2 className={shellClassNames.sectionTitle}>{title}</h2>
+    <div className={cn(shellClassNames.sectionUnderline, underlineWidth)} />
+  </>
+);
+
+const FramedImage = ({
+  image,
+  alt,
+  index,
+  className,
+  frameClassName,
+  imageClassName,
+  evenRotation = "-rotate-4",
+  oddRotation = "rotate-4",
+}) => (
+  <div className={cn("relative inline-block", getRotationClass(index, evenRotation, oddRotation), className)}>
+    <span className={shellClassNames.tape} />
+    <span className={shellClassNames.frameShadow} />
+    <div className={cn("relative border-[5px] border-black bg-[#cdb5ea] p-2 dark:border-violet-300 dark:bg-violet-950/70", frameClassName)}>
+      {image ? (
+        <img src={image} alt={alt} className={imageClassName} />
+      ) : (
+        <div className={cn("bg-gradient-to-br from-muted/70 via-muted/40 to-background", imageClassName)} />
+      )}
+    </div>
+  </div>
+);
+
+const SpecialsSection = () => {
+  return (
+    <section className={shellClassNames.container}>
+      <SectionHeading title="Enjoy iconic District specials" underlineWidth="w-64" />
+
+      <div className="mt-12 grid gap-8 md:grid-cols-3">
+        {specials.map((item, index) => (
+          <article
+            key={item.title}
+            className="p-2 text-center dark:rounded-3xl dark:border dark:border-violet-400/20 dark:bg-slate-900/45 dark:shadow-[0_30px_85px_-62px_rgba(124,58,237,1)]"
+          >
+            <h3 className="text-4xl font-black tracking-tight text-slate-900 dark:text-violet-100 md:text-5xl">
+              {item.title}
+            </h3>
+            <p className="mt-3 text-lg text-muted-foreground md:text-xl">{item.description}</p>
+            <FramedImage
+              image={item.image}
+              alt={item.title}
+              index={index}
+              className="mt-6"
+              frameClassName="pb-6"
+              imageClassName="h-52 w-52 object-cover"
+            />
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+};
+
+const DealsSection = ({ listings }) => {
+  if (!listings.length) return null;
+
+  return (
+    <section className="container mx-auto mt-16 px-4 md:px-8">
+      <SectionHeading title="Grab great deals and unlock extra savings" underlineWidth="w-72" />
+      <div className="mt-8 grid gap-7 md:grid-cols-2">
+        {listings.map((listing, index) => {
+          const listingImageUrl = getListingImageUrl(listing);
+          return (
+            <article
+              key={listing.id}
+              className="grid items-center gap-5 rounded-2xl p-4 text-center dark:border dark:border-violet-400/20 dark:bg-slate-900/35 md:grid-cols-[1fr_auto] md:text-left"
+            >
+              <div>
+                <h3 className="text-3xl font-black text-slate-900 dark:text-violet-200 md:text-4xl">
+                  {index === 0 ? "Up to 50% OFF" : "Buffets"}
+                </h3>
+                <p className="mt-2 text-lg text-muted-foreground">{listing.title}</p>
+              </div>
+
+              <FramedImage
+                image={listingImageUrl}
+                alt={listing.title}
+                index={index}
+                className="justify-self-center md:justify-self-end"
+                frameClassName="pb-5"
+                imageClassName="h-44 w-44 object-cover"
+                evenRotation="-rotate-6"
+                oddRotation="rotate-6"
+              />
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+};
+
+const ListingsSection = ({
+  loading,
+  restaurants,
+  distanceSortEnabled,
+  userCoords,
+  toggleWishlist,
+  sortLabel,
+  distanceSortMessage,
+  isFilterModalOpen,
+  setIsFilterModalOpen,
+  sort,
+  setSort,
+  setPage,
+  navigate,
+}) => (
+  <section className="container mx-auto mt-16 px-4 md:px-8">
+    <div className="mb-5 flex items-center justify-between">
+      <h2 className="text-2xl font-black text-slate-900 dark:text-violet-100 md:text-3xl">Dining near you</h2>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setIsFilterModalOpen(true)}
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-violet-200/90 bg-violet-50/90 px-3 text-xs font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-900/35 dark:text-violet-200 dark:hover:bg-violet-900/55"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Filters
+        </button>
+        <button
+          type="button"
+          className="text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300"
+          onClick={() => navigate("/search?types=RESTAURANT")}
+        >
+          View all
+        </button>
+      </div>
+    </div>
+
+    <p className="mb-2 text-xs text-muted-foreground">Sort by: {sortLabel}</p>
+    {distanceSortMessage ? <p className="mb-4 text-xs text-muted-foreground">{distanceSortMessage}</p> : null}
+
+    <SortFilterModal
+      open={isFilterModalOpen}
+      onOpenChange={setIsFilterModalOpen}
+      sortOptions={sortOptions}
+      selectedSort={sort}
+      onApply={({ sort: nextSort }) => {
+        setPage(1);
+        setSort(nextSort || "popularity");
+      }}
+    />
+
+    {loading ? (
+      <div className={shellClassNames.infoState}>Loading restaurants...</div>
+    ) : restaurants.length === 0 ? (
+      <div className={shellClassNames.infoState}>No restaurants found for your search.</div>
+    ) : (
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        {restaurants.map((listing) => (
+          <EventCard
+            key={listing.id}
+            listing={listing}
+            onToggleWishlist={toggleWishlist}
+            showDistance={distanceSortEnabled && Boolean(userCoords)}
+          />
+        ))}
+      </div>
+    )}
+  </section>
+);
 
 const DiningPage = () => {
   const navigate = useNavigate();
@@ -73,10 +274,7 @@ const DiningPage = () => {
   const loading = listingsQuery.isLoading || (distanceSortEnabled && locationLoading);
 
   const topDeals = useMemo(() => restaurants.filter((item) => item.offer_text).slice(0, 2), [restaurants]);
-  const getListingImageUrl = (listing) =>
-    (typeof listing?.cover_image_url === "string" && listing.cover_image_url.trim()) ||
-    (typeof listing?.gallery_image_urls?.[0] === "string" && listing.gallery_image_urls[0].trim()) ||
-    null;
+
   const distanceSortMessage = useMemo(() => {
     if (!distanceSortEnabled) return "";
     if (locationLoading) return "Getting your location to sort by distance...";
@@ -85,28 +283,20 @@ const DiningPage = () => {
   }, [distanceSortEnabled, locationLoading, userCoords, locationError]);
 
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-[#efedf8] pb-16 dark:bg-[radial-gradient(120%_120%_at_50%_-10%,rgba(109,40,217,0.35),rgba(17,24,39,1)_45%,rgba(3,7,18,1)_100%)]">
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute left-[11%] top-[43%] hidden text-4xl text-violet-500/70 md:block dark:text-violet-300/75"
-      >
-        *
-      </span>
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute right-[12%] top-[36%] hidden text-4xl text-violet-500/70 md:block dark:text-violet-300/75"
-      >
-        *
-      </span>
+    <div className={shellClassNames.page}>
+      <DecorativeStar className="left-[11%] top-[43%]" />
+      <DecorativeStar className="right-[12%] top-[36%]" />
 
       <section className="pt-10 pb-16">
-        <div className="container mx-auto px-4 md:px-8">
+        <div className={shellClassNames.container}>
           <div className="mx-auto max-w-5xl rounded-[34px] border border-violet-300/45 bg-[#ddd8ef] px-6 py-12 text-center shadow-[0_24px_70px_-58px_rgba(109,40,217,0.65)] md:px-14 md:py-16 dark:border-violet-400/20 dark:bg-gradient-to-br dark:from-slate-900 dark:via-violet-950/45 dark:to-fuchsia-950/35 dark:shadow-[0_45px_110px_-60px_rgba(91,33,182,0.95)]">
             <h1 className="mx-auto max-w-3xl text-4xl font-black leading-tight tracking-tight text-slate-900 md:text-6xl dark:bg-gradient-to-r dark:from-violet-200 dark:via-fuchsia-300 dark:to-indigo-300 dark:bg-clip-text dark:text-transparent">
-              Discover restaurants, explore menus, book tables - all in one place
+              Discover restaurants, explore menus, book tables
+              <br />
+              - all in one place
             </h1>
 
-            <div className="relative max-w-[560px] mx-auto mt-10">
+            <div className="relative mx-auto mt-10 max-w-[560px]">
               <Search className="absolute left-5 top-1/2 h-7 w-7 -translate-y-1/2 text-violet-500 dark:text-violet-300" />
               <input
                 value={query}
@@ -115,126 +305,30 @@ const DiningPage = () => {
                   setQuery(event.target.value);
                 }}
                 placeholder="Search for a restaurant name"
-                className="h-16 w-full rounded-[28px] border border-[#cbc8d8] bg-[#f4f3f7] pl-16 pr-5 text-2xl leading-none text-slate-900 shadow-sm placeholder:text-slate-500/85 focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/35 md:text-[34px] dark:border-violet-500/35 dark:bg-slate-900/80 dark:text-violet-100 dark:placeholder:text-violet-200/45 dark:focus-visible:border-violet-300 dark:focus-visible:ring-violet-500/35"
+                className="h-16 w-full rounded-[28px] border border-[#cbc8d8] bg-[#f4f3f7] pl-16 pr-5 text-2xl leading-none text-slate-900 shadow-sm placeholder:text-slate-500/85 focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/35 dark:border-violet-500/35 dark:bg-slate-900/80 dark:text-violet-100 dark:placeholder:text-violet-200/45 dark:focus-visible:border-violet-300 dark:focus-visible:ring-violet-500/35 md:text-[34px]"
               />
             </div>
           </div>
         </div>
       </section>
 
-      <section className="container mx-auto px-4 md:px-8">
-        <h2 className="text-center text-4xl font-black text-slate-900 md:text-5xl dark:text-violet-200">Enjoy iconic District specials</h2>
-        <div className="mx-auto mt-3 h-1 w-64 -rotate-1 rounded-full bg-violet-500/90 dark:bg-violet-300" />
-
-        <div className="grid md:grid-cols-3 gap-8 mt-12">
-          {specials.map((item, index) => (
-            <article key={item.title} className="p-2 text-center dark:rounded-3xl dark:border dark:border-violet-400/20 dark:bg-slate-900/45 dark:shadow-[0_30px_85px_-62px_rgba(124,58,237,1)]">
-              <h3 className="text-4xl md:text-5xl font-black tracking-tight text-slate-900 dark:text-violet-100">{item.title}</h3>
-              <p className="mt-3 text-lg md:text-xl text-muted-foreground">{item.description}</p>
-              <div
-                className={`relative mt-6 inline-block ${index % 2 === 0 ? "-rotate-4" : "rotate-4"}`}
-              >
-                <span className="absolute -top-1 left-1/2 z-10 h-3 w-10 -translate-x-1/2 -rotate-6 bg-zinc-400/50 dark:bg-violet-200/20" />
-                <span className="absolute inset-0 translate-x-[5px] translate-y-[5px] bg-black/90" />
-                <div className="relative border-[5px] border-black bg-[#cdb5ea] p-2 pb-6 dark:border-violet-300 dark:bg-violet-950/70">
-                  <img src={item.image} alt={item.title} className="h-52 w-52 object-cover" />
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      {topDeals.length ? (
-        <section className="container mx-auto px-4 md:px-8 mt-16">
-          <h2 className="text-center text-4xl md:text-5xl font-black text-slate-900 dark:text-violet-200">Grab great deals and unlock extra savings</h2>
-          <div className="mx-auto mt-3 h-1 w-72 -rotate-1 rounded-full bg-violet-500/90 dark:bg-violet-300" />
-          <div className="grid md:grid-cols-2 gap-7 mt-8">
-            {topDeals.map((listing, index) => {
-              const listingImageUrl = getListingImageUrl(listing);
-              return (
-                <article key={listing.id} className="grid items-center gap-5 rounded-2xl p-4 text-center md:grid-cols-[1fr_auto] md:text-left dark:border dark:border-violet-400/20 dark:bg-slate-900/35">
-                  <div>
-                    <h3 className="text-3xl md:text-4xl font-black text-slate-900 dark:text-violet-200">{index === 0 ? "Up to 50% OFF" : "Buffets"}</h3>
-                    <p className="text-lg text-muted-foreground mt-2">{listing.title}</p>
-                  </div>
-                  <div className={`relative inline-block justify-self-center md:justify-self-end ${index % 2 === 0 ? "-rotate-6" : "rotate-6"}`}>
-                    <span className="absolute -top-1 left-1/2 z-10 h-3 w-10 -translate-x-1/2 -rotate-6 bg-zinc-400/50 dark:bg-violet-200/20" />
-                    <span className="absolute inset-0 translate-x-[5px] translate-y-[5px] bg-black/90" />
-                    <div className="relative border-[5px] border-black bg-[#cdb5ea] p-2 pb-5 dark:border-violet-300 dark:bg-violet-950/70">
-                      {listingImageUrl ? (
-                        <img
-                          src={listingImageUrl}
-                          alt={listing.title}
-                          className="h-44 w-44 object-cover"
-                        />
-                      ) : (
-                        <div className="h-44 w-44 bg-gradient-to-br from-muted/70 via-muted/40 to-background" />
-                      )}
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="container mx-auto px-4 md:px-8 mt-16">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-violet-100">Dining near you</h2>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setIsFilterModalOpen(true)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-violet-200/90 bg-violet-50/90 px-3 text-xs font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-900/35 dark:text-violet-200 dark:hover:bg-violet-900/55"
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              Filters
-            </button>
-            <button
-              type="button"
-              className="text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300"
-              onClick={() => navigate("/search?types=RESTAURANT")}
-            >
-              View all
-            </button>
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground mb-2">Sort by: {sortLabel}</p>
-        {distanceSortMessage ? <p className="text-xs text-muted-foreground mb-4">{distanceSortMessage}</p> : null}
-        <SortFilterModal
-          open={isFilterModalOpen}
-          onOpenChange={setIsFilterModalOpen}
-          sortOptions={sortOptions}
-          selectedSort={sort}
-          onApply={({ sort: nextSort }) => {
-            setPage(1);
-            setSort(nextSort || "popularity");
-          }}
-        />
-
-        {loading ? (
-          <div className="rounded-lg border border-violet-200/75 bg-violet-50/85 p-5 text-sm text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/25 dark:text-violet-200/85">
-            Loading restaurants...
-          </div>
-        ) : restaurants.length === 0 ? (
-          <div className="rounded-lg border border-violet-200/75 bg-violet-50/85 p-5 text-sm text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/25 dark:text-violet-200/85">
-            No restaurants found for your search.
-          </div>
-        ) : (
-          <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-5">
-            {restaurants.map((listing) => (
-              <EventCard
-                key={listing.id}
-                listing={listing}
-                onToggleWishlist={toggleWishlist}
-                showDistance={distanceSortEnabled && Boolean(userCoords)}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      <SpecialsSection />
+      <DealsSection listings={topDeals} />
+      <ListingsSection
+        loading={loading}
+        restaurants={restaurants}
+        distanceSortEnabled={distanceSortEnabled}
+        userCoords={userCoords}
+        toggleWishlist={toggleWishlist}
+        sortLabel={sortLabel}
+        distanceSortMessage={distanceSortMessage}
+        isFilterModalOpen={isFilterModalOpen}
+        setIsFilterModalOpen={setIsFilterModalOpen}
+        sort={sort}
+        setSort={setSort}
+        setPage={setPage}
+        navigate={navigate}
+      />
     </div>
   );
 };

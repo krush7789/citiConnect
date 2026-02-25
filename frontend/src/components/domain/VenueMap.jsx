@@ -36,9 +36,13 @@ const ensureLeafletAssets = () =>
     document.head.appendChild(script);
   });
 
-const toNumber = (value) => {
+const toCoordinate = (value, min, max) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < min || parsed > max) return null;
+  return parsed;
 };
 
 const VenueMap = ({ latitude, longitude, title, address, zoom = 15 }) => {
@@ -46,8 +50,8 @@ const VenueMap = ({ latitude, longitude, title, address, zoom = 15 }) => {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const lat = toNumber(latitude);
-    const lon = toNumber(longitude);
+    const lat = toCoordinate(latitude, -90, 90);
+    const lon = toCoordinate(longitude, -180, 180);
     if (lat === null || lon === null) return undefined;
 
     const mapContainer = mapContainerRef.current;

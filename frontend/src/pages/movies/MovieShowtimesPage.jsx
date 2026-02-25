@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { listingService } from "@/api/services";
 import { LISTING_TYPE, OCCURRENCE_STATUS } from "@/lib/enums";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, toApiDateTimeMs } from "@/lib/format";
 
 const MovieShowtimesPage = () => {
   const navigate = useNavigate();
@@ -31,7 +31,7 @@ const MovieShowtimesPage = () => {
         const now = Date.now();
         const upcoming = (response.occurrences || []).filter((occurrence) => {
           if (occurrence.status !== OCCURRENCE_STATUS.SCHEDULED) return false;
-          const reference = new Date(occurrence.end_time || occurrence.start_time).getTime();
+          const reference = toApiDateTimeMs(occurrence.end_time || occurrence.start_time);
           return !Number.isNaN(reference) && reference >= now;
         });
 

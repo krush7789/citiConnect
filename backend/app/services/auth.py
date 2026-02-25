@@ -16,7 +16,11 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import User
-from app.repository.auth import create_user, get_user_by_email, get_user_by_id
+from app.repository.auth import (
+    create_user,
+    get_user_by_email,
+    get_user_by_id,
+)
 from app.services.email import send_forgot_password_email
 
 PASSWORD_POLICY = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$")
@@ -43,7 +47,6 @@ def _user_payload(user: User) -> dict:
         "name": user.name,
         "email": user.email,
         "role": user.role,
-        "is_temporary_password": user.is_temporary_password,
     }
 
 
@@ -53,6 +56,10 @@ def _token_payload(user: User) -> dict[str, str]:
         "email": user.email,
         "role": user.role,
     }
+
+
+def _normalize_email(value: str) -> str:
+    return value.strip().lower()
 
 
 async def register_user(
@@ -73,18 +80,23 @@ async def register_user(
 
     ensure_password_policy(password)
 
-    existing = await get_user_by_email(db, email)
+    normalized_email = _normalize_email(email)
+    existing = await get_user_by_email(db, normalized_email)
     if existing:
         raise_api_error(409, "EMAIL_ALREADY_EXISTS", "Email is already registered")
 
     user = await create_user(
-        db, name=name, email=email, password_hash=hash_password(password)
+        db,
+        name=name.strip(),
+        email=normalized_email,
+        password_hash=hash_password(password),
     )
     access_token = create_access_token(
         _token_payload(user), settings.access_token_expire_seconds
     )
     refresh_token = create_refresh_token(
-        {"sub": str(user.id)}, settings.refresh_token_expire_seconds
+        {"sub": str(user.id)},
+        settings.refresh_token_expire_seconds,
     )
 
     await db.commit()
@@ -103,7 +115,8 @@ async def register_user(
 async def login_user(
     db: AsyncSession, *, email: str, password: str
 ) -> tuple[dict, str]:
-    user = await get_user_by_email(db, email)
+    normalized_email = _normalize_email(email)
+    user = await get_user_by_email(db, normalized_email)
     if not user or not verify_password(password, user.password_hash):
         raise_api_error(401, "INVALID_CREDENTIALS", "Email or password is incorrect")
 
@@ -114,8 +127,10 @@ async def login_user(
         _token_payload(user), settings.access_token_expire_seconds
     )
     refresh_token = create_refresh_token(
-        {"sub": str(user.id)}, settings.refresh_token_expire_seconds
+        {"sub": str(user.id)},
+        settings.refresh_token_expire_seconds,
     )
+    await db.commit()
 
     return (
         {
@@ -129,39 +144,37 @@ async def login_user(
 
 
 async def forgot_password(db: AsyncSession, *, email: str) -> None:
-    user = await get_user_by_email(db, email)
+    normalized_email = _normalize_email(email)
+    user = await get_user_by_email(db, normalized_email)
     if not user:
         return
 
     previous_hash = user.password_hash
-    previous_temporary_flag = bool(user.is_temporary_password)
     alphabet = string.ascii_letters + string.digits + "@#$%!"
-    temporary_password = "".join(secrets.choice(alphabet) for _ in range(12))
-    user.password_hash = hash_password(temporary_password)
-    user.is_temporary_password = True
+    reset_password = "".join(secrets.choice(alphabet) for _ in range(12))
+    user.password_hash = hash_password(reset_password)
     await db.commit()
 
     sent = await send_forgot_password_email(
         to_email=user.email,
         recipient_name=user.name,
-        temporary_password=temporary_password,
+        reset_password=reset_password,
         fail_silently=True,
     )
     if sent:
         return
 
     logger.warning(
-        "Forgot-password email delivery failed for user_id=%s; reverting temporary password update.",
+        "Forgot-password email delivery failed for user_id=%s; reverting password reset.",
         user.id,
     )
     user.password_hash = previous_hash
-    user.is_temporary_password = previous_temporary_flag
     try:
         await db.commit()
     except Exception:
         await db.rollback()
         logger.exception(
-            "Failed to revert temporary password for user_id=%s after email failure.",
+            "Failed to revert password reset for user_id=%s after email failure.",
             user.id,
         )
 
@@ -200,9 +213,7 @@ async def change_password(
     ensure_password_policy(new_password)
 
     user.password_hash = hash_password(new_password)
-    user.is_temporary_password = False
     await db.commit()
-
 
 async def refresh_access_token(db: AsyncSession, refresh_token: str) -> dict:
     try:
@@ -217,7 +228,12 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> dict:
     if not user_id:
         raise_api_error(401, "UNAUTHORIZED", "Invalid token payload")
 
-    user = await get_user_by_id(db, UUID(user_id))
+    try:
+        user_uuid = UUID(str(user_id))
+    except (TypeError, ValueError):
+        raise_api_error(401, "UNAUTHORIZED", "Invalid token payload")
+
+    user = await get_user_by_id(db, user_uuid)
     if not user or not user.is_active:
         raise_api_error(401, "UNAUTHORIZED", "User not found or inactive")
 

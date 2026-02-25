@@ -151,18 +151,18 @@ async def send_forgot_password_email(
     *,
     to_email: str,
     recipient_name: str | None,
-    temporary_password: str,
+    reset_password: str,
     fail_silently: bool = False,
 ) -> bool:
     safe_name = escape((recipient_name or "there").strip() or "there")
-    safe_password = escape(temporary_password)
+    safe_password = escape(reset_password)
     safe_app_name = escape(settings.app_name)
 
-    subject = f"{settings.app_name}: Temporary Password"
+    subject = f"{settings.app_name}: Password Reset"
     text_body = (
         f"Hello {recipient_name or 'there'},\n\n"
-        f"Your temporary password is: {temporary_password}\n\n"
-        "Please log in and change your password immediately.\n"
+        f"Your new password is: {reset_password}\n\n"
+        "Please log in and change your password.\n"
         "If you did not request this reset, please contact support.\n\n"
         f"- {settings.app_name}"
     )
@@ -171,9 +171,9 @@ async def send_forgot_password_email(
       <body style="font-family: Arial, sans-serif; color: #111827; line-height: 1.5;">
         <h2 style="margin-bottom: 8px;">Password Reset Requested</h2>
         <p>Hello {safe_name},</p>
-        <p>Your temporary password for <strong>{safe_app_name}</strong> is:</p>
+        <p>Your new password for <strong>{safe_app_name}</strong> is:</p>
         <p style="font-size: 18px; font-weight: 700; letter-spacing: 0.3px;">{safe_password}</p>
-        <p>Please log in and change your password immediately.</p>
+        <p>Please log in and change your password.</p>
         <p style="color: #6b7280;">If you did not request this, please contact support.</p>
       </body>
     </html>

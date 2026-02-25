@@ -11,12 +11,6 @@ class UpdateMeRequest(BaseModel):
     profile_image_url: str | None = Field(default=None, max_length=512)
 
 
-class UserStats(BaseModel):
-    total_bookings: int = 0
-    upcoming_bookings: int = 0
-    total_spent: float = 0
-
-
 class UserMeItem(BaseModel):
     id: UUID
     name: str
@@ -25,8 +19,6 @@ class UserMeItem(BaseModel):
     profile_image_url: str | None = None
     role: UserRole
     is_active: bool
-    is_temporary_password: bool
-    stats: UserStats
 
 
 class UserMeResponse(BaseModel):

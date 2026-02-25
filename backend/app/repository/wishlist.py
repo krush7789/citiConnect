@@ -11,6 +11,7 @@ from app.models.listing import Listing
 from app.models.occurrence import Occurrence
 from app.models.venue import Venue
 from app.models.wishlist import Wishlist
+from app.utils.datetime_utils import utcnow
 
 
 async def list_user_wishlist(
@@ -20,7 +21,7 @@ async def list_user_wishlist(
     page: int,
     page_size: int,
 ):
-    now = datetime.now()
+    now = utcnow()
     active_occurrence_exists = exists(
         select(Occurrence.id).where(
             Occurrence.listing_id == Listing.id,
@@ -63,7 +64,7 @@ async def list_user_wishlist(
 
 
 async def is_published_listing(db: AsyncSession, *, listing_id: UUID) -> bool:
-    now = datetime.now()
+    now = utcnow()
     active_occurrence_exists = exists(
         select(Occurrence.id).where(
             Occurrence.listing_id == Listing.id,

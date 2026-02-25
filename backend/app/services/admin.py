@@ -41,6 +41,7 @@ from app.schema.admin import (
 )
 from app.services.email import send_occurrence_cancelled_email
 from app.services.geocoding import geocode_address
+from app.utils.datetime_utils import normalize_datetime, reference_end_time, utcnow
 from app.utils.pagination import build_paginated_response
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,24 @@ def normalize_optional_text(value: str | None) -> str | None:
     return cleaned or None
 
 
+def to_title_case_words(value: str) -> str:
+    # Capitalize first letter of each space-delimited token.
+    compact = " ".join(str(value or "").strip().split())
+    if not compact:
+        return ""
+    return " ".join(
+        token[:1].upper() + token[1:].lower() if token else ""
+        for token in compact.split(" ")
+    )
+
+
+def normalize_title_text(value: str | None) -> str | None:
+    cleaned = normalize_optional_text(value)
+    if not cleaned:
+        return None
+    return to_title_case_words(cleaned)
+
+
 def normalize_string_list(items: list[str] | None) -> list[str] | None:
     if not items:
         return None
@@ -182,13 +201,16 @@ async def get_or_create_city(
     name: str,
     state: str | None = None,
 ) -> City:
-    existing = await admin_repository.find_city_by_name_case_insensitive(db, name)
+    normalized_name = to_title_case_words(name)
+    existing = await admin_repository.find_city_by_name_case_insensitive(
+        db, normalized_name
+    )
     if existing:
         return existing
 
     city = City(
-        name=name.strip(),
-        state=normalize_optional_text(state),
+        name=normalized_name,
+        state=normalize_title_text(state),
         is_active=True,
     )
     admin_repository.add_instance(db, city)
@@ -203,16 +225,17 @@ async def get_or_create_city_placeholder_venue(
     venue_name: str,
     address: str | None = None,
 ) -> Venue:
+    normalized_venue_name = to_title_case_words(venue_name)
     existing = await admin_repository.find_venue_by_city_and_name_case_insensitive(
         db,
         city_id=city.id,
-        venue_name=venue_name,
+        venue_name=normalized_venue_name,
     )
     if existing:
         return existing
 
     venue = Venue(
-        name=venue_name.strip(),
+        name=normalized_venue_name,
         city_id=city.id,
         address=normalize_optional_text(address),
         venue_type=VenueType.EVENT_SPACE,
@@ -308,7 +331,13 @@ def validate_price_range(price_min: Decimal | None, price_max: Decimal | None) -
 def validate_occurrence_window(
     start_time: datetime, end_time: datetime | None
 ) -> None:
-    if end_time is not None and start_time >= end_time:
+    normalized_start = normalize_datetime(start_time)
+    normalized_end = normalize_datetime(end_time)
+    if (
+        normalized_start is not None
+        and normalized_end is not None
+        and normalized_start >= normalized_end
+    ):
         raise_api_error(
             422,
             "VALIDATION_ERROR",
@@ -426,7 +455,7 @@ async def add_audit_log(
 
 
 async def get_admin_dashboard(db: AsyncSession) -> dict[str, Any]:
-    now = datetime.now()
+    now = utcnow()
     start_of_day = datetime.combine(now.date(), time.min)
     next_day = start_of_day + timedelta(days=1)
     week_ago = now - timedelta(days=7)
@@ -546,7 +575,7 @@ async def create_admin_listing_entry(
 
     listing = Listing(
         type=payload.type,
-        title=payload.title.strip(),
+        title=to_title_case_words(payload.title),
         description=normalize_optional_text(payload.description),
         city_id=city.id,
         venue_id=venue.id,
@@ -639,7 +668,7 @@ async def update_admin_listing_entry(
         listing.type = payload.type
         diff["type"] = payload.type.value
     if payload.title is not None:
-        listing.title = payload.title.strip()
+        listing.title = to_title_case_words(payload.title)
         diff["title"] = listing.title
     if payload.description is not None:
         listing.description = normalize_optional_text(payload.description)
@@ -714,7 +743,7 @@ async def archive_admin_listing_entry(
     if not listing:
         raise_api_error(404, "NOT_FOUND", "Listing not found")
 
-    now = datetime.now()
+    now = utcnow()
     cancelled_occurrences = 0
     cancelled_bookings = 0
     reason = "Occurrence cancelled because listing was archived by admin"
@@ -728,7 +757,7 @@ async def archive_admin_listing_entry(
         db, listing.id
     )
     for occurrence in occurrence_rows:
-        reference_end = occurrence.end_time or occurrence.start_time
+        reference_end = reference_end_time(occurrence.start_time, occurrence.end_time)
         if reference_end is None or reference_end >= now:
             occurrence.status = OccurrenceStatus.CANCELLED
             occurrence.capacity_remaining = occurrence.capacity_total
@@ -899,7 +928,16 @@ async def create_admin_occurrence_entries(
 
     created: list[Occurrence] = []
     for entry in payload.occurrences:
-        validate_occurrence_window(entry.start_time, entry.end_time)
+        start_time = normalize_datetime(entry.start_time)
+        end_time = normalize_datetime(entry.end_time)
+        if start_time is None:
+            raise_api_error(
+                422,
+                "VALIDATION_ERROR",
+                "Some fields are invalid",
+                {"fields": {"start_time": "start_time is required"}},
+            )
+        validate_occurrence_window(start_time, end_time)
 
         venue = await admin_repository.get_venue(db, entry.venue_id)
         if not venue:
@@ -917,9 +955,11 @@ async def create_admin_occurrence_entries(
                 listing_id=listing.id,
                 venue_id=venue.id,
                 city_id=venue.city_id if allow_cross_city_venues else listing.city_id,
-                start_time=entry.start_time,
-                end_time=entry.end_time,
-                provider_sub_location=normalize_optional_text(entry.provider_sub_location),
+                start_time=start_time,
+                end_time=end_time,
+                provider_sub_location=normalize_title_text(
+                    entry.provider_sub_location
+                ),
                 capacity_total=int(entry.capacity_total),
                 capacity_remaining=int(entry.capacity_total),
                 ticket_pricing=normalize_json_dict(entry.ticket_pricing),
@@ -969,16 +1009,26 @@ async def update_admin_occurrence_entry(
         listing_city.name if listing_city else None
     )
 
-    next_start = (
+    raw_next_start = (
         payload.start_time
         if "start_time" in payload.model_fields_set
         else occurrence.start_time
     )
-    next_end = (
+    raw_next_end = (
         payload.end_time
         if "end_time" in payload.model_fields_set
         else occurrence.end_time
     )
+    if raw_next_start is None:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"start_time": "start_time is required"}},
+        )
+
+    next_start = normalize_datetime(raw_next_start)
+    next_end = normalize_datetime(raw_next_end)
     if next_start is None:
         raise_api_error(
             422,
@@ -986,6 +1036,7 @@ async def update_admin_occurrence_entry(
             "Some fields are invalid",
             {"fields": {"start_time": "start_time is required"}},
         )
+
     validate_occurrence_window(next_start, next_end)
 
     diff: dict[str, Any] = {}
@@ -1024,7 +1075,7 @@ async def update_admin_occurrence_entry(
         diff["city_id"] = str(occurrence.city_id)
 
     if "provider_sub_location" in payload.model_fields_set:
-        occurrence.provider_sub_location = normalize_optional_text(
+        occurrence.provider_sub_location = normalize_title_text(
             payload.provider_sub_location
         )
         diff["provider_sub_location"] = occurrence.provider_sub_location
@@ -1329,6 +1380,9 @@ async def create_admin_offer_entry(
     if existing:
         raise_api_error(409, "DUPLICATE_CODE", "Offer code already exists")
 
+    valid_from = normalize_datetime(payload.valid_from)
+    valid_until = normalize_datetime(payload.valid_until)
+
     offer = Offer(
         code=code,
         title=payload.title.strip(),
@@ -1337,8 +1391,8 @@ async def create_admin_offer_entry(
         discount_value=payload.discount_value,
         min_order_value=payload.min_order_value,
         max_discount_value=payload.max_discount_value,
-        valid_from=payload.valid_from,
-        valid_until=payload.valid_until,
+        valid_from=valid_from,
+        valid_until=valid_until,
         usage_limit=normalize_limit(payload.usage_limit),
         user_usage_limit=normalize_limit(payload.user_usage_limit),
         is_active=payload.is_active,
@@ -1410,11 +1464,13 @@ async def update_admin_offer_entry(
         offer.max_discount_value = payload.max_discount_value
         diff["max_discount_value"] = float(payload.max_discount_value)
     if payload.valid_from is not None:
-        offer.valid_from = payload.valid_from
-        diff["valid_from"] = payload.valid_from.isoformat()
+        valid_from = normalize_datetime(payload.valid_from)
+        offer.valid_from = valid_from
+        diff["valid_from"] = valid_from.isoformat() if valid_from else None
     if payload.valid_until is not None:
-        offer.valid_until = payload.valid_until
-        diff["valid_until"] = payload.valid_until.isoformat()
+        valid_until = normalize_datetime(payload.valid_until)
+        offer.valid_until = valid_until
+        diff["valid_until"] = valid_until.isoformat() if valid_until else None
     if payload.usage_limit is not None:
         offer.usage_limit = normalize_limit(payload.usage_limit)
         diff["usage_limit"] = offer.usage_limit
@@ -1480,7 +1536,7 @@ async def create_admin_city_entry(
     payload: CityCreateRequest,
     admin_user_id: UUID,
 ) -> dict[str, Any]:
-    name = payload.name.strip()
+    name = to_title_case_words(payload.name)
     if not name:
         raise_api_error(
             422,
@@ -1495,7 +1551,7 @@ async def create_admin_city_entry(
 
     city = City(
         name=name,
-        state=normalize_optional_text(payload.state),
+        state=normalize_title_text(payload.state),
         image_url=normalize_optional_text(payload.image_url),
         is_active=payload.is_active,
     )
@@ -1523,7 +1579,7 @@ async def create_admin_venue_entry(
     if not city:
         raise_api_error(404, "NOT_FOUND", "City not found")
 
-    normalized_name = payload.name.strip()
+    normalized_name = to_title_case_words(payload.name)
     normalized_address = normalize_optional_text(payload.address)
     latitude = payload.latitude
     longitude = payload.longitude

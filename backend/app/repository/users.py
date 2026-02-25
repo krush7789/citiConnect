@@ -11,6 +11,7 @@ from app.models.booking import Booking
 from app.models.enums import BookingStatus
 from app.models.occurrence import Occurrence
 from app.models.user import User
+from app.utils.datetime_utils import utcnow
 
 
 async def count_total_bookings(db: AsyncSession, user_id: UUID) -> int:
@@ -25,7 +26,7 @@ async def count_total_bookings(db: AsyncSession, user_id: UUID) -> int:
 async def count_upcoming_confirmed_bookings(
     db: AsyncSession, user_id: UUID, now: datetime | None = None
 ) -> int:
-    reference = now or datetime.now()
+    reference = now or utcnow()
     return int(
         (
             await db.execute(

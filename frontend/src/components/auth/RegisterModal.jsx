@@ -5,6 +5,8 @@ import * as Yup from "yup";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
+import AuthModalLayout from "@/components/auth/AuthModalLayout";
+import AuthField from "@/components/auth/AuthField";
 
 const validationSchema = Yup.object({
   name: Yup.string().trim().required("Full name is required."),
@@ -38,17 +40,20 @@ const RegisterModal = () => {
   });
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="text-center space-y-1">
-        <h2 className="text-2xl font-black tracking-tight text-foreground">Create account</h2>
-        <p className="text-sm text-muted-foreground">Sign up once and continue across all modules</p>
-      </div>
-
+    <AuthModalLayout
+      title="Create account"
+      subtitle="Sign up once and continue across all modules"
+      footer={
+        <div className="text-center text-sm">
+          Already have an account?{" "}
+          <button type="button" className="text-primary hover:underline" onClick={() => switchAuthModal("login")}>
+            Login
+          </button>
+        </div>
+      }
+    >
       <form onSubmit={formik.handleSubmit} className="space-y-4">
-        <div className="space-y-1.5">
-          <label htmlFor="register_name" className="text-xs font-medium text-muted-foreground">
-            Full name <span className="text-destructive">*</span>
-          </label>
+        <AuthField id="register_name" label="Full name" error={formik.touched.name ? formik.errors.name : ""}>
           <Input
             id="register_name"
             name="name"
@@ -57,13 +62,9 @@ const RegisterModal = () => {
             onChange={formik.handleChange}
             onBlur={formik.handleBlur}
           />
-          {formik.touched.name && formik.errors.name ? <p className="text-xs text-destructive">{formik.errors.name}</p> : null}
-        </div>
+        </AuthField>
 
-        <div className="space-y-1.5">
-          <label htmlFor="register_email" className="text-xs font-medium text-muted-foreground">
-            Email address <span className="text-destructive">*</span>
-          </label>
+        <AuthField id="register_email" label="Email address" error={formik.touched.email ? formik.errors.email : ""}>
           <Input
             id="register_email"
             name="email"
@@ -73,13 +74,13 @@ const RegisterModal = () => {
             onChange={formik.handleChange}
             onBlur={formik.handleBlur}
           />
-          {formik.touched.email && formik.errors.email ? <p className="text-xs text-destructive">{formik.errors.email}</p> : null}
-        </div>
+        </AuthField>
 
-        <div className="space-y-1.5">
-          <label htmlFor="register_password" className="text-xs font-medium text-muted-foreground">
-            Password <span className="text-destructive">*</span>
-          </label>
+        <AuthField
+          id="register_password"
+          label="Password"
+          error={formik.touched.password ? formik.errors.password : ""}
+        >
           <Input
             id="register_password"
             name="password"
@@ -89,13 +90,13 @@ const RegisterModal = () => {
             onChange={formik.handleChange}
             onBlur={formik.handleBlur}
           />
-          {formik.touched.password && formik.errors.password ? <p className="text-xs text-destructive">{formik.errors.password}</p> : null}
-        </div>
+        </AuthField>
 
-        <div className="space-y-1.5">
-          <label htmlFor="register_confirm_password" className="text-xs font-medium text-muted-foreground">
-            Confirm password <span className="text-destructive">*</span>
-          </label>
+        <AuthField
+          id="register_confirm_password"
+          label="Confirm password"
+          error={formik.touched.confirmPassword ? formik.errors.confirmPassword : ""}
+        >
           <Input
             id="register_confirm_password"
             name="confirmPassword"
@@ -105,10 +106,7 @@ const RegisterModal = () => {
             onChange={formik.handleChange}
             onBlur={formik.handleBlur}
           />
-          {formik.touched.confirmPassword && formik.errors.confirmPassword ? (
-            <p className="text-xs text-destructive">{formik.errors.confirmPassword}</p>
-          ) : null}
-        </div>
+        </AuthField>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
@@ -116,14 +114,7 @@ const RegisterModal = () => {
           {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create account"}
         </Button>
       </form>
-
-      <div className="text-center text-sm">
-        Already have an account?{" "}
-        <button type="button" className="text-primary hover:underline" onClick={() => switchAuthModal("login")}>
-          Login
-        </button>
-      </div>
-    </div>
+    </AuthModalLayout>
   );
 };
 

@@ -253,6 +253,11 @@ const AdminListingForm = ({
                                 Use {listingFormik.values.type} template
                             </Button>
                         </div>
+                        {listingFormik.values.type === "EVENT" ? (
+                            <p className="text-[11px] text-muted-foreground">
+                                Event user limit field: <span className="font-mono">booking.per_user_ticket_limit</span> (set a positive integer, or keep <span className="font-mono">null</span> for no limit).
+                            </p>
+                        ) : null}
                         <Textarea
                             name="metadata_text"
                             value={listingFormik.values.metadata_text}

@@ -13,49 +13,24 @@ from app.repository.city import list_cities
 from app.repository.master import list_offers_for_master
 from app.repository.venue import list_venues
 from app.services.geocoding import geocode_address
+from app.utils.datetime_utils import normalize_datetime, utcnow
 from app.utils.pagination import build_paginated_response
 
 
-def _normalize_string_list(value: Any, *, uppercase: bool = False) -> list[str]:
-    if not isinstance(value, list):
-        return []
-
-    normalized: list[str] = []
-    for item in value:
-        text = str(item).strip()
-        if not text:
-            continue
-        normalized.append(text.upper() if uppercase else text)
-    return normalized
-
-
-def _offer_matches_scope(
-    offer: Offer, *, city_id: UUID | None, listing_type: ListingType | None
-) -> bool:
-    applicability = offer.applicability if isinstance(offer.applicability, dict) else {}
-
-    if city_id is not None:
-        supported_city_ids = _normalize_string_list(applicability.get("city_ids"))
-        if supported_city_ids and str(city_id) not in supported_city_ids:
-            return False
-
-    if listing_type is not None:
-        supported_types = _normalize_string_list(
-            applicability.get("types"), uppercase=True
-        )
-        if supported_types and listing_type.value.upper() not in supported_types:
-            return False
-
-    return True
-
-
 def _serialize_offer_row(offer: Offer, *, now: datetime) -> dict[str, Any]:
-    valid_from = offer.valid_from
-    valid_until = offer.valid_until
+    reference_now = normalize_datetime(now)
+    valid_from = normalize_datetime(offer.valid_from)
+    valid_until = normalize_datetime(offer.valid_until)
     is_current = bool(
         offer.is_active
-        and (valid_from is None or now >= valid_from)
-        and (valid_until is None or now <= valid_until)
+        and (
+            valid_from is None
+            or (reference_now is not None and reference_now >= valid_from)
+        )
+        and (
+            valid_until is None
+            or (reference_now is not None and reference_now <= valid_until)
+        )
     )
     return {
         "id": offer.id,
@@ -138,27 +113,20 @@ async def get_offers_page(
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
-    now = datetime.now()
+    now = utcnow()
     code_query = code.strip() if code else None
     search_query = q.strip() if q else None
-    rows = await list_offers_for_master(
+    rows, total = await list_offers_for_master(
         db,
         now=now,
         current_only=current_only,
         code_query=code_query,
         search_query=search_query,
+        city_id=city_id,
+        offer_type=offer_type,
+        page=page,
+        page_size=page_size,
     )
-    filtered_rows = [
-        row
-        for row in rows
-        if _offer_matches_scope(row, city_id=city_id, listing_type=offer_type)
-    ]
-
-    total = len(filtered_rows)
-    start = (page - 1) * page_size
-    items = [
-        _serialize_offer_row(row, now=now)
-        for row in filtered_rows[start : start + page_size]
-    ]
+    items = [_serialize_offer_row(row, now=now) for row in rows]
     return build_paginated_response(items, page=page, page_size=page_size, total=total)
 

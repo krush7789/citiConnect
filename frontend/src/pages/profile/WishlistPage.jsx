@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import EventCard from "@/components/domain/EventCard";
 import { wishlistService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
 
 const WishlistPage = () => {
-  const navigate = useNavigate();
   const { requireAuth, isAuthenticated } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -61,12 +59,7 @@ const WishlistPage = () => {
 
   return (
     <div className="container mx-auto px-4 md:px-8 py-8 pb-16">
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-2xl font-bold">Wishlist</h1>
-        <button type="button" className="text-sm text-primary hover:underline" onClick={() => navigate("/search")}>
-          Discover more
-        </button>
-      </div>
+      <h1 className="text-2xl font-bold mb-5">Wishlist</h1>
 
       {loading ? <p className="text-sm text-muted-foreground">Loading wishlist...</p> : null}
       {!loading && items.length === 0 ? (

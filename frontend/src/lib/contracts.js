@@ -1,4 +1,5 @@
 import { BOOKING_STATUS, LISTING_STATUS, LISTING_TYPE, OCCURRENCE_STATUS, USER_ROLE } from "@/lib/enums";
+import { toApiDateTimeMs } from "@/lib/format";
 
 const fallbackDate = () => new Date().toISOString();
 const isObject = (value) => value && typeof value === "object" && !Array.isArray(value);
@@ -44,13 +45,7 @@ export const normalizeUser = (value = {}) => ({
   role: value.role || USER_ROLE.USER,
   phone: value.phone || "",
   profile_image_url: value.profile_image_url || "",
-  is_temporary_password: Boolean(value.is_temporary_password),
   is_active: value.is_active !== false,
-  stats: value.stats || {
-    total_bookings: 0,
-    upcoming_bookings: 0,
-    total_spent: 0,
-  },
 });
 
 export const normalizeCity = (value = {}) => ({
@@ -120,6 +115,8 @@ export const normalizeBooking = (value = {}) => ({
   id: value.id || "booking-missing",
   user_id: value.user_id || "",
   occurrence_id: value.occurrence_id || "",
+  occurrence_start_time: value.occurrence_start_time || null,
+  occurrence_end_time: value.occurrence_end_time || null,
   listing_snapshot: value.listing_snapshot || {},
   booked_seats: value.booked_seats || [],
   ticket_breakdown: value.ticket_breakdown || {},
@@ -158,8 +155,8 @@ export const normalizeOfferItem = (value = {}) => {
     value.applicability && typeof value.applicability === "object" && !Array.isArray(value.applicability)
       ? value.applicability
       : {};
-  const fromTime = new Date(value.valid_from).getTime();
-  const untilTime = new Date(value.valid_until).getTime();
+  const fromTime = toApiDateTimeMs(value.valid_from);
+  const untilTime = toApiDateTimeMs(value.valid_until);
   const now = Date.now();
   const inferredCurrent =
     value.is_active !== false &&

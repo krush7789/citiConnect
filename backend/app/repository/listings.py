@@ -23,6 +23,7 @@ from app.repository.listing import (
     list_listings,
     list_occurrences_for_listing,
 )
+from app.utils.datetime_utils import utcnow
 
 
 async def fetch_listing_filters_metadata(
@@ -117,7 +118,7 @@ async def fetch_venue_name_map_for_occurrences(
 
 
 async def expire_stale_locks(db: AsyncSession, *, now: datetime | None = None) -> int:
-    reference = now or datetime.now()
+    reference = now or utcnow()
     return await expire_stale_seat_locks(db, now=reference)
 
 
@@ -137,7 +138,7 @@ async def fetch_active_seat_locks(
     *,
     now: datetime | None = None,
 ) -> dict[str, SeatLock]:
-    reference = now or datetime.now()
+    reference = now or utcnow()
     return await get_active_seat_locks(db, occurrence_id, now=reference)
 
 

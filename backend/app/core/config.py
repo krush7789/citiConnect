@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     app_name: str = Field(default="CitiConnect Backend")
     cors_origins: str = Field(default="http://localhost:5173,http://127.0.0.1:5173")
     enable_scheduler: bool = Field(default=True)
+    refresh_cookie_secure: bool = Field(default=False)
+    refresh_cookie_samesite: str = Field(default="lax")
 
     geocoding_provider: str = Field(default="nominatim")
     geocoding_base_url: str = Field(

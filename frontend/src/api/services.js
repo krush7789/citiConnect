@@ -84,7 +84,13 @@ export const offerService = {
 
 export const bookingService = {
   createLock: (payload) =>
-    handleApiCall(() => api.post("/bookings/locks", payload), (data) => normalizeBooking(data.booking)),
+    handleApiCall(() => api.post("/bookings/locks", payload), (data) => {
+      const booking = normalizeBooking(data?.booking || data);
+      if (!booking?.id || booking.id === "booking-missing") {
+        throw createError("INVALID_RESPONSE", "Unable to start booking session. Please try again.");
+      }
+      return booking;
+    }),
   applyOffer: (bookingId, couponCode) =>
     handleApiCall(
       () =>
@@ -172,5 +178,5 @@ export const searchService = {
 };
 
 export const miscService = {
-  getArtists: () => handleApiCall(() => api.get("/artists"), (data) => data.items || data || []),
+  getArtists: async () => [],
 };

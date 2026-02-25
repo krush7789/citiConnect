@@ -26,12 +26,15 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    same_site = str(settings.refresh_cookie_samesite or "lax").strip().lower()
+    if same_site not in {"lax", "strict", "none"}:
+        same_site = "lax"
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=settings.refresh_cookie_secure,
+        samesite=same_site,
         max_age=settings.refresh_token_expire_seconds,
         path="/",
     )
@@ -67,7 +70,7 @@ async def login(
 async def forgot(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     await forgot_password(db, email=payload.email)
     return {
-        "message": "If an account with this email exists, a temporary password has been sent"
+        "message": "If an account with this email exists, a new password has been sent"
     }
 
 
@@ -98,6 +101,8 @@ async def refresh(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/logout", response_model=MessageResponse)
-async def logout(response: Response):
+async def logout(
+    response: Response,
+):
     response.delete_cookie(key="refresh_token", path="/")
     return {"message": "Logged out successfully"}

@@ -53,7 +53,7 @@ function processDirectory(dir) {
                     // Use a regex that properly replaces the exact path:
                     // We need double-escaped dots if there are any, but here it's alphabetical.
                     // Look for 'oldImport' followed by a quote.
-                    const oldImportEscaped = oldImport.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                    const oldImportEscaped = oldImport.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
                     const regexStr = "(['\"`])" + oldImportEscaped + "(['\"`])";
                     const regex = new RegExp(regexStr, 'g');
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { Bell, Heart, LogOut, Lock, MoonStar, Sun, Ticket, User } from "lucide-react";
+import { Bell, Heart, LogOut, MoonStar, Sun, Ticket, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -15,7 +15,7 @@ const menuItems = [
 
 const ProfileDrawer = ({ onClose }) => {
   const navigate = useNavigate();
-  const { user, logout, switchAuthModal } = useAuth();
+  const { user, logout } = useAuth();
   const { isDarkMode, toggleDarkMode } = useTheme();
 
   const onNavigate = (path) => {
@@ -56,18 +56,6 @@ const ProfileDrawer = ({ onClose }) => {
             </button>
           );
         })}
-
-        <button
-          type="button"
-          onClick={() => {
-            switchAuthModal("change_password");
-            onClose();
-          }}
-          className="w-full text-left px-3 py-2.5 rounded-lg border hover:bg-muted/60 transition flex items-center gap-2"
-        >
-          <Lock className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Change Password</span>
-        </button>
 
         <button
           type="button"

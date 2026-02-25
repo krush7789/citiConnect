@@ -20,6 +20,7 @@ from app.models.seat_lock import SeatLock
 from app.models.venue import Venue
 from app.models.wishlist import Wishlist
 from app.services.geo import haversine_sql_expression
+from app.utils.datetime_utils import utcnow
 
 NATIONWIDE_CITY_ALIASES = ("all india", "nationwide", "pan india", "pan-india")
 
@@ -149,7 +150,7 @@ async def list_listings(
 ):
     nationwide_city_ids = await _get_nationwide_city_ids(db) if city_id else []
 
-    now = datetime.now()
+    now = utcnow()
     next_occurrence_subq = (
         select(
             Occurrence.listing_id.label("listing_id"),
@@ -282,7 +283,7 @@ async def get_next_occurrences_for_listing_ids(
     if not listing_ids:
         return {}
 
-    now = datetime.now()
+    now = utcnow()
 
     stmt = (
         select(Occurrence)
@@ -361,7 +362,7 @@ async def get_active_seat_locks(
     occurrence_id: UUID,
     now: datetime | None = None,
 ) -> dict[str, SeatLock]:
-    reference = now or datetime.now()
+    reference = now or utcnow()
     stmt = select(SeatLock).where(
         SeatLock.occurrence_id == occurrence_id,
         SeatLock.status == SeatLockStatus.ACTIVE,

@@ -1,20 +1,60 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { bookingService, listingService } from "@/api/services";
+import { bookingService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";
 import { BOOKING_STATUS } from "@/lib/enums";
 import { formatCurrency, formatDateTime } from "@/lib/format";
+
+const toTicketTypeLabel = (raw) => {
+  const token = String(raw || "").trim();
+  if (!token) return "";
+  if (token.toUpperCase() === "SELECTED") return "Selected seats";
+  return token
+    .toLowerCase()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
+const getTicketTypeLines = (booking) => {
+  const rawBreakdown =
+    booking?.ticket_breakdown && typeof booking.ticket_breakdown === "object"
+      ? booking.ticket_breakdown
+      : {};
+  const rawTickets =
+    rawBreakdown.tickets &&
+    typeof rawBreakdown.tickets === "object" &&
+    !Array.isArray(rawBreakdown.tickets)
+      ? rawBreakdown.tickets
+      : rawBreakdown;
+
+  const hiddenKeys = new Set([
+    "base_amount",
+    "tax_amount",
+    "gross_amount",
+    "tax_rate",
+  ]);
+
+  return Object.entries(rawTickets)
+    .filter(([key, quantity]) => !hiddenKeys.has(key) && Number(quantity) > 0)
+    .map(([key, quantity]) => ({
+      label: toTicketTypeLabel(key),
+      quantity: Number(quantity),
+    }))
+    .filter((entry) => entry.label);
+};
 
 const BookingDetailPage = () => {
   const navigate = useNavigate();
   const { bookingId } = useParams();
   const { requireAuth, isAuthenticated } = useAuth();
   const [booking, setBooking] = useState(null);
-  const [occurrence, setOccurrence] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
 
   useEffect(() => {
     if (!requireAuth({ type: "navigate", path: `/bookings/${bookingId}` })) {
@@ -26,15 +66,9 @@ const BookingDetailPage = () => {
     setLoading(true);
     bookingService
       .getBookingById(bookingId)
-      .then(async (data) => {
+      .then((data) => {
         if (!mounted) return;
         setBooking(data);
-        const listingId = data.listing_snapshot?.listing_id;
-        if (listingId) {
-          const listingData = await listingService.getListingById(listingId);
-          const occ = (listingData.occurrences || []).find((item) => item.id === data.occurrence_id);
-          setOccurrence(occ || null);
-        }
       })
       .catch((err) => {
         if (!mounted) return;
@@ -73,6 +107,8 @@ const BookingDetailPage = () => {
     );
   }
   const cancellationReason = String(booking.cancellation_reason || "").trim();
+  const hasSelectedSeats = Array.isArray(booking.booked_seats) && booking.booked_seats.length > 0;
+  const ticketTypeLines = getTicketTypeLines(booking);
 
   return (
     <div className="container mx-auto px-4 md:px-8 py-8 pb-16 max-w-3xl">
@@ -89,16 +125,30 @@ const BookingDetailPage = () => {
         <div className="grid sm:grid-cols-2 gap-4 text-sm">
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Date & Time</p>
-            <p className="font-medium mt-1">{occurrence ? formatDateTime(occurrence.start_time) : "--"}</p>
+            <p className="font-medium mt-1">
+              {booking.occurrence_start_time
+                ? formatDateTime(booking.occurrence_start_time)
+                : "--"}
+            </p>
           </div>
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Quantity</p>
             <p className="font-medium mt-1">{booking.quantity}</p>
           </div>
-          <div className="rounded-lg border p-3">
-            <p className="text-xs text-muted-foreground">Seats</p>
-            <p className="font-medium mt-1">{booking.booked_seats?.length ? booking.booked_seats.join(", ") : "N/A"}</p>
-          </div>
+          {hasSelectedSeats ? (
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Seats</p>
+              <p className="font-medium mt-1">{booking.booked_seats.join(", ")}</p>
+            </div>
+          ) : null}
+          {ticketTypeLines.length ? (
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Ticket type</p>
+              <p className="font-medium mt-1">
+                {ticketTypeLines.map((entry) => `${entry.label} x${entry.quantity}`).join(", ")}
+              </p>
+            </div>
+          ) : null}
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Final amount</p>
             <p className="font-medium mt-1">{formatCurrency(booking.final_price, booking.currency)}</p>
@@ -130,16 +180,27 @@ const BookingDetailPage = () => {
               disabled={actionLoading}
               onClick={async () => {
                 setActionLoading(true);
-                await bookingService.cancelBooking(booking.id, "Plan changed");
-                const refreshed = await bookingService.getBookingById(booking.id);
-                setBooking(refreshed);
-                setActionLoading(false);
+                setActionError("");
+                try {
+                  await bookingService.cancelBooking(booking.id, "Plan changed");
+                  const refreshed = await bookingService.getBookingById(booking.id);
+                  setBooking(refreshed);
+                } catch (err) {
+                  setActionError(
+                    err?.normalized?.message || "Unable to cancel booking."
+                  );
+                } finally {
+                  setActionLoading(false);
+                }
               }}
             >
               Cancel booking
             </Button>
           ) : null}
         </div>
+        {actionError ? (
+          <p className="text-sm text-destructive">{actionError}</p>
+        ) : null}
       </div>
     </div>
   );

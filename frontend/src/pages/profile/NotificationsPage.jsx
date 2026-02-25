@@ -86,7 +86,7 @@ const NotificationsPage = () => {
                   <div>
                     <p className="font-semibold text-sm">{item.title}</p>
                     <p className="text-sm text-muted-foreground mt-1">{item.body}</p>
-                    <p className="text-xs text-muted-foreground mt-2">{formatDateTime(item.created_at, "Asia/Kolkata")}</p>
+                    <p className="text-xs text-muted-foreground mt-2">{formatDateTime(item.created_at)}</p>
                   </div>
                 </div>
                 {!item.is_read ? (

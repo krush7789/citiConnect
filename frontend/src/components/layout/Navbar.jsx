@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { LayoutDashboard, MapPin, Search } from "lucide-react";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
@@ -19,6 +20,20 @@ const navItems = [
   { label: "Dining", path: "/dining" },
   { label: "Activities", path: "/activities" },
 ];
+
+const isActiveNavPath = (pathname, itemPath) => pathname === itemPath;
+
+const desktopLinkClass = (active) =>
+  `px-3 py-1.5 rounded-full text-sm transition ${active
+    ? "bg-primary text-primary-foreground shadow-sm"
+    : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
+  }`;
+
+const mobileLinkClass = (active) =>
+  `whitespace-nowrap px-3 py-1.5 rounded-full text-xs border ${active
+    ? "bg-primary text-primary-foreground border-primary"
+    : "bg-card text-foreground/80 border-input hover:bg-muted/70 hover:text-foreground"
+  }`;
 
 const Navbar = () => {
   const location = useLocation();
@@ -61,6 +76,12 @@ const Navbar = () => {
 
   const selectedCity = useMemo(() => cities.find((city) => city.id === selectedCityId), [cities, selectedCityId]);
 
+  const handleCityChange = (event) => {
+    const nextCityId = event.target.value;
+    setSelectedCity(nextCityId);
+    setSelectedCityId(nextCityId);
+  };
+
   return (
     <nav className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur">
       <div className="container mx-auto px-4 md:px-8">
@@ -74,10 +95,7 @@ const Navbar = () => {
               <MapPin className="h-4 w-4 text-primary" />
               <Select
                 value={selectedCityId}
-                onChange={(event) => {
-                  setSelectedCity(event.target.value);
-                  setSelectedCityId(event.target.value);
-                }}
+                onChange={handleCityChange}
                 size="sm"
                 tone="subtle"
                 wrapperClassName="w-[170px]"
@@ -98,17 +116,9 @@ const Navbar = () => {
 
           <div className="hidden md:flex items-center gap-1">
             {navItems.map((item) => {
-              const active = location.pathname === item.path;
+              const active = isActiveNavPath(location.pathname, item.path);
               return (
-                <Link
-                  key={item.label}
-                  to={item.path}
-                  className={`px-3 py-1.5 rounded-full text-sm transition ${
-                    active
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
-                  }`}
-                >
+                <Link key={item.label} to={item.path} className={desktopLinkClass(active)}>
                   {item.label}
                 </Link>
               );
@@ -136,6 +146,7 @@ const Navbar = () => {
                 </Button>
               </DialogTrigger>
               <DialogContent hideClose className="sm:max-w-160 p-0 border-none bg-transparent shadow-none">
+                <VisuallyHidden><DialogTitle>Search</DialogTitle></VisuallyHidden>
                 <SearchModal onClose={() => setSearchOpen(false)} />
               </DialogContent>
             </Dialog>
@@ -159,17 +170,9 @@ const Navbar = () => {
 
         <div className="md:hidden pb-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
           {navItems.map((item) => {
-            const active = location.pathname === item.path;
+            const active = isActiveNavPath(location.pathname, item.path);
             return (
-              <Link
-                key={item.label}
-                to={item.path}
-                className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs border ${
-                  active
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card text-foreground/80 border-input hover:bg-muted/70 hover:text-foreground"
-                }`}
-              >
+              <Link key={item.label} to={item.path} className={mobileLinkClass(active)}>
                 {item.label}
               </Link>
             );

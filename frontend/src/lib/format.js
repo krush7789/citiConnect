@@ -1,5 +1,23 @@
 import dayjs from "dayjs";
 
+const API_TZ_SUFFIX_RE = /(Z|[+-]\d{2}:\d{2})$/i;
+
+const normalizeApiDateInput = (value) => {
+  const raw = typeof value === "string" ? value.trim() : String(value ?? "").trim();
+  if (!raw) return "";
+  if (!raw.includes("T")) return raw;
+  if (API_TZ_SUFFIX_RE.test(raw)) return raw;
+  return `${raw}Z`;
+};
+
+const parseApiDate = (value) => dayjs(normalizeApiDateInput(value));
+
+export const toApiDateTimeMs = (value) => {
+  const parsed = parseApiDate(value);
+  if (!parsed.isValid()) return Number.NaN;
+  return parsed.valueOf();
+};
+
 export const formatCurrency = (amount, currency = "INR") => {
   const safeAmount = Number.isFinite(Number(amount)) ? Number(amount) : 0;
   return new Intl.NumberFormat("en-IN", {
@@ -11,23 +29,22 @@ export const formatCurrency = (amount, currency = "INR") => {
 
 export const formatDateTime = (isoString) => {
   if (!isoString) return "--";
-  const parsed = dayjs(isoString);
+  const parsed = parseApiDate(isoString);
   if (!parsed.isValid()) return "--";
   return parsed.format("ddd, DD MMM, hh:mm A");
 };
 
 export const formatDateOnly = (isoString) => {
   if (!isoString) return "--";
-  const parsed = dayjs(isoString);
+  const parsed = parseApiDate(isoString);
   if (!parsed.isValid()) return "--";
   return parsed.format("DD MMM YYYY");
 };
 
 export const getTimeRemainingMs = (isoExpiry) => {
-  if (!isoExpiry) return 0;
-  const expiry = dayjs(isoExpiry);
-  if (!expiry.isValid()) return 0;
-  return Math.max(0, expiry.valueOf() - dayjs().valueOf());
+  const expiryMs = toApiDateTimeMs(isoExpiry);
+  if (!Number.isFinite(expiryMs)) return Number.NaN;
+  return Math.max(0, expiryMs - Date.now());
 };
 
 export const formatCountdown = (ms) => {

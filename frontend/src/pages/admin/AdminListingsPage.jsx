@@ -56,12 +56,14 @@ const metadataTemplates = {
     entry_gate: "",
     reporting_time: "",
     parking: "Available",
+    booking: {
+      per_user_ticket_limit: null,
+    },
   },
   [LISTING_TYPE.RESTAURANT]: {
     cuisine: "",
     avg_cost_for_two: 0,
-    rating: "",
-    features: [],
+    Facilities: [],
     opening_hours: "",
     dress_code: "",
   },

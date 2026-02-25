@@ -1,5 +1,13 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import LoginModal from "@/components/auth/LoginModal";
 import RegisterModal from "@/components/auth/RegisterModal";
 import ForgotPasswordModal from "@/components/auth/ForgotPasswordModal";
@@ -8,10 +16,23 @@ import { authService } from "@/api/services";
 import { clearStoredAuth, setStoredToken, setUnauthorizedHandler, USER_STORAGE_KEY } from "@/api/client";
 import { normalizeUser } from "@/lib/contracts";
 
+const isPersistedUser = (value) =>
+  Boolean(
+    value &&
+    typeof value === "object" &&
+    typeof value.id === "string" &&
+    value.id.trim() &&
+    typeof value.email === "string" &&
+    value.email.includes("@")
+  );
+
 const readStoredUser = () => {
   try {
     const raw = localStorage.getItem(USER_STORAGE_KEY);
-    return raw ? normalizeUser(JSON.parse(raw)) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isPersistedUser(parsed)) return null;
+    return normalizeUser(parsed);
   } catch {
     return null;
   }
@@ -41,11 +62,16 @@ export const AuthProvider = ({ children }) => {
   const [authLoading, setAuthLoading] = useState(false);
 
   const isAuthenticated = Boolean(user);
-  const authState = user?.is_temporary_password ? "force_password_change" : user ? "authenticated" : "anonymous";
+  const authState = user ? "authenticated" : "anonymous";
 
   const persistAuth = useCallback((authPayload) => {
-    const normalizedUser = normalizeUser(authPayload.user);
-    setStoredToken(authPayload.access_token);
+    const token = typeof authPayload?.access_token === "string" ? authPayload.access_token.trim() : "";
+    const rawUser = authPayload?.user;
+    if (!token || !isPersistedUser(rawUser)) {
+      throw new Error("Invalid auth response");
+    }
+    const normalizedUser = normalizeUser(rawUser);
+    setStoredToken(token);
     localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(normalizedUser));
     setUser(normalizedUser);
     return normalizedUser;
@@ -81,32 +107,24 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authService.login(payload);
       const nextUser = persistAuth(response);
-      if (nextUser.is_temporary_password) {
-        openAuthModal("force_change_password");
-      } else {
-        closeAuthModal();
-      }
+      closeAuthModal();
       return nextUser;
     } finally {
       setAuthLoading(false);
     }
-  }, [persistAuth, closeAuthModal, openAuthModal]);
+  }, [persistAuth, closeAuthModal]);
 
   const register = useCallback(async (payload) => {
     setAuthLoading(true);
     try {
       const response = await authService.register(payload);
       const nextUser = persistAuth(response);
-      if (nextUser.is_temporary_password) {
-        openAuthModal("force_change_password");
-      } else {
-        closeAuthModal();
-      }
+      closeAuthModal();
       return nextUser;
     } finally {
       setAuthLoading(false);
     }
-  }, [persistAuth, closeAuthModal, openAuthModal]);
+  }, [persistAuth, closeAuthModal]);
 
   const forgotPassword = useCallback(async (payload) => {
     setAuthLoading(true);
@@ -123,26 +141,23 @@ export const AuthProvider = ({ children }) => {
     setAuthLoading(true);
     try {
       const response = await authService.changePassword(payload);
-      if (user) {
-        const nextUser = { ...user, is_temporary_password: false };
-        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(nextUser));
-        setUser(nextUser);
-      }
       closeAuthModal();
       return response;
     } finally {
       setAuthLoading(false);
     }
-  }, [user, closeAuthModal]);
+  }, [closeAuthModal]);
 
-  React.useEffect(() => {
-    setUnauthorizedHandler(() => {
-      setUser(null);
-      clearStoredAuth();
-      openAuthModal("login");
-    });
-    return () => setUnauthorizedHandler(() => { });
+  const handleUnauthorized = useCallback(() => {
+    setUser(null);
+    clearStoredAuth();
+    openAuthModal("login");
   }, [openAuthModal]);
+
+  useEffect(() => {
+    setUnauthorizedHandler(handleUnauthorized);
+    return () => setUnauthorizedHandler(null);
+  }, [handleUnauthorized]);
 
   const contextValue = useMemo(
     () => ({
@@ -163,7 +178,23 @@ export const AuthProvider = ({ children }) => {
       changePassword,
       logout,
     }),
-    [user, isAuthenticated, authState, authLoading, authModalState, pendingIntent, openAuthModal, closeAuthModal, switchAuthModal, requireAuth, login, register, forgotPassword, changePassword, logout]
+    [
+      user,
+      isAuthenticated,
+      authState,
+      authLoading,
+      authModalState,
+      pendingIntent,
+      openAuthModal,
+      closeAuthModal,
+      switchAuthModal,
+      requireAuth,
+      login,
+      register,
+      forgotPassword,
+      changePassword,
+      logout,
+    ]
   );
 
   const ActiveModal = modalRenderMap[authModalState.view];
@@ -173,6 +204,7 @@ export const AuthProvider = ({ children }) => {
       {children}
       <Dialog open={authModalState.open} onOpenChange={(open) => !open && closeAuthModal()}>
         <DialogContent className="p-0 sm:max-w-[430px]">
+          <VisuallyHidden><DialogTitle>Authentication</DialogTitle></VisuallyHidden>
           {ActiveModal ? <ActiveModal /> : null}
         </DialogContent>
       </Dialog>

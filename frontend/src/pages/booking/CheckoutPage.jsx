@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, CheckCircle2, Ticket } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Ticket, X } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { bookingService, listingService, offerService } from "@/api/services";
@@ -7,9 +7,43 @@ import { useAuth } from "@/context/AuthContext";
 import PaymentModal from "./components/PaymentModal";
 import OfferModal from "./components/OfferModal";
 import { BOOKING_STATUS } from "@/lib/enums";
-import { formatCountdown, formatCurrency, formatDateTime, getTimeRemainingMs } from "@/lib/format";
+import { formatCountdown, formatCurrency, formatDateTime, toApiDateTimeMs } from "@/lib/format";
 
 const normalizeToken = (value) => String(value || "").trim().toUpperCase();
+const HOLD_DURATION_MS = 10 * 60 * 1000;
+const computeHoldRemainingMs = (booking) => {
+  if (!booking || booking.status !== BOOKING_STATUS.HOLD || !booking.hold_expires_at) {
+    if (!booking || booking.status !== BOOKING_STATUS.HOLD) return null;
+    const createdAtMs = toApiDateTimeMs(booking.created_at);
+    if (!Number.isFinite(createdAtMs)) return null;
+    return Math.max(0, createdAtMs + HOLD_DURATION_MS - Date.now());
+  }
+
+  const holdExpiryMs = toApiDateTimeMs(booking.hold_expires_at);
+  const createdAtMs = toApiDateTimeMs(booking.created_at);
+  const holdRemainingMs = Number.isFinite(holdExpiryMs) ? holdExpiryMs - Date.now() : Number.NEGATIVE_INFINITY;
+  const fallbackRemainingMs = Number.isFinite(createdAtMs)
+    ? createdAtMs + HOLD_DURATION_MS - Date.now()
+    : Number.NEGATIVE_INFINITY;
+  const remainingMs = Math.max(holdRemainingMs, fallbackRemainingMs);
+
+  return Number.isFinite(remainingMs) ? Math.max(0, remainingMs) : null;
+};
+
+const resolveSelectionPath = (booking, listing) => {
+  const listingId = String(listing?.id || booking?.listing_snapshot?.listing_id || "").trim();
+  const occurrenceId = String(booking?.occurrence_id || "").trim();
+  const listingType = normalizeToken(listing?.type || booking?.listing_snapshot?.type);
+
+  if (!listingId) return "/";
+
+  if (listingType === "MOVIE" || (Array.isArray(booking?.booked_seats) && booking.booked_seats.length > 0)) {
+    if (occurrenceId) return `/listings/${listingId}/occurrences/${occurrenceId}/seats`;
+    return `/listings/${listingId}/showtimes`;
+  }
+
+  return `/listings/${listingId}/occurrences`;
+};
 let razorpayScriptPromise = null;
 
 const ensureRazorpayScript = async () => {
@@ -52,12 +86,14 @@ const CheckoutPage = () => {
   const { bookingId } = useParams();
   const { requireAuth, user } = useAuth();
   const idempotencyKeyRef = useRef(`idem-${Math.random().toString(36).slice(2, 10)}-${Date.now()}`);
+  const sessionHandledRef = useRef(false);
+  const expiryCheckRef = useRef(false);
 
   const [booking, setBooking] = useState(null);
   const [listing, setListing] = useState(null);
   const [occurrence, setOccurrence] = useState(null);
   const [availableOffers, setAvailableOffers] = useState([]);
-  const [countdownMs, setCountdownMs] = useState(0);
+  const [countdownMs, setCountdownMs] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [offerLoading, setOfferLoading] = useState(false);
@@ -66,6 +102,11 @@ const CheckoutPage = () => {
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [offerError, setOfferError] = useState("");
+
+  useEffect(() => {
+    sessionHandledRef.current = false;
+    expiryCheckRef.current = false;
+  }, [bookingId]);
 
   const formatApplyOfferError = (error) => {
     const code = error?.normalized?.code;
@@ -90,18 +131,80 @@ const CheckoutPage = () => {
     return message;
   };
 
+  const handleHoldExpired = useCallback(
+    async (details = {}) => {
+      const expiryFromError = typeof details?.hold_expires_at === "string" ? details.hold_expires_at : null;
+      setShowOfferModal(false);
+      setShowPaymentModal(false);
+
+      if (!booking?.id) {
+        setBooking((prev) =>
+          prev
+            ? { ...prev, status: BOOKING_STATUS.EXPIRED, hold_expires_at: expiryFromError || prev.hold_expires_at }
+            : prev
+        );
+        return;
+      }
+
+      try {
+        const latest = await bookingService.getBookingById(booking.id);
+        if (latest?.status === BOOKING_STATUS.EXPIRED) {
+          setBooking({
+            ...latest,
+            hold_expires_at: latest.hold_expires_at || expiryFromError,
+          });
+          return;
+        }
+        setBooking({
+          ...latest,
+          status: BOOKING_STATUS.EXPIRED,
+          hold_expires_at: latest?.hold_expires_at || expiryFromError || null,
+        });
+      } catch {
+        setBooking((prev) =>
+          prev
+            ? { ...prev, status: BOOKING_STATUS.EXPIRED, hold_expires_at: expiryFromError || prev.hold_expires_at }
+            : prev
+        );
+      }
+    },
+    [booking?.id]
+  );
+
 
 
   const loadBooking = useCallback(async () => {
     const bookingResponse = await bookingService.getBookingById(bookingId);
     setBooking(bookingResponse);
 
+    const fallbackOccurrence =
+      bookingResponse.occurrence_start_time || bookingResponse.occurrence_end_time
+        ? {
+            id: bookingResponse.occurrence_id,
+            start_time: bookingResponse.occurrence_start_time,
+            end_time: bookingResponse.occurrence_end_time,
+            venue_name: bookingResponse?.listing_snapshot?.venue_name || "",
+          }
+        : null;
+    setOccurrence(fallbackOccurrence);
+
     const listingId = bookingResponse.listing_snapshot?.listing_id;
-    if (listingId) {
+    if (!listingId) {
+      setListing(null);
+      return;
+    }
+
+    try {
       const listingResponse = await listingService.getListingById(listingId);
       setListing(listingResponse.listing || null);
-      const occ = (listingResponse.occurrences || []).find((item) => item.id === bookingResponse.occurrence_id);
+      const occ =
+        (listingResponse.occurrences || []).find(
+          (item) => item.id === bookingResponse.occurrence_id
+        ) || fallbackOccurrence;
       setOccurrence(occ || null);
+    } catch {
+      // Keep checkout working from booking snapshot when listing is archived/deleted.
+      setListing(null);
     }
   }, [bookingId]);
 
@@ -129,25 +232,61 @@ const CheckoutPage = () => {
   }, [bookingId, requireAuth, loadBooking]);
 
   useEffect(() => {
-    if (!booking?.hold_expires_at) {
-      setCountdownMs(0);
+    if (!booking || booking.status !== BOOKING_STATUS.HOLD) {
+      setCountdownMs(null);
       return undefined;
     }
-    const update = () => setCountdownMs(getTimeRemainingMs(booking.hold_expires_at));
+    const update = () => setCountdownMs(computeHoldRemainingMs(booking));
     update();
     const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
-  }, [booking?.hold_expires_at]);
+  }, [booking]);
+
+  useEffect(() => {
+    if (booking?.status === BOOKING_STATUS.HOLD && countdownMs !== null && countdownMs > 0) {
+      expiryCheckRef.current = false;
+    }
+  }, [booking?.status, countdownMs]);
 
   const isHoldExpired = useMemo(
-    () => booking?.status === BOOKING_STATUS.EXPIRED || (booking?.status === BOOKING_STATUS.HOLD && countdownMs <= 0),
+    () =>
+      booking?.status === BOOKING_STATUS.EXPIRED ||
+      (booking?.status === BOOKING_STATUS.HOLD &&
+        countdownMs !== null &&
+        countdownMs <= 0),
     [booking?.status, countdownMs]
   );
+  const selectionPath = useMemo(() => resolveSelectionPath(booking, listing), [booking, listing]);
+
+  useEffect(() => {
+    if (!booking || booking.status !== BOOKING_STATUS.EXPIRED || sessionHandledRef.current) return;
+    sessionHandledRef.current = true;
+
+    setShowPaymentModal(false);
+    setShowOfferModal(false);
+    navigate(selectionPath, { replace: true });
+  }, [booking, navigate, selectionPath]);
+
+  useEffect(() => {
+    if (!booking || booking.status !== BOOKING_STATUS.HOLD) return;
+    if (countdownMs === null || countdownMs > 0 || expiryCheckRef.current) return;
+
+    expiryCheckRef.current = true;
+    const checkServerExpiry = async () => {
+      try {
+        const latest = await bookingService.getBookingById(booking.id);
+        setBooking(latest);
+      } catch {
+        // Keep current screen state; user can retry from selection.
+      }
+    };
+    checkServerExpiry();
+  }, [booking, countdownMs]);
 
   const applicableOffers = useMemo(() => {
     const listingType = normalizeToken(listing?.type || booking?.listing_snapshot?.type);
     const listingCategory = normalizeToken(listing?.category);
-    const listingCityId = String(listing?.city_id || "").trim();
+    const listingCityId = String(listing?.city_id || booking?.listing_snapshot?.city_id || "").trim();
     const listingId = String(listing?.id || booking?.listing_snapshot?.listing_id || "").trim();
     const bookingTotal = Number(booking?.total_price || 0);
 
@@ -191,8 +330,9 @@ const CheckoutPage = () => {
       current_only: true,
     };
 
-    if (listing?.city_id) {
-      params.city_id = listing.city_id;
+    const cityId = listing?.city_id || booking?.listing_snapshot?.city_id;
+    if (cityId) {
+      params.city_id = cityId;
     }
     if (listingType) {
       params.type = listingType;
@@ -208,7 +348,7 @@ const CheckoutPage = () => {
     } finally {
       setOfferLoading(false);
     }
-  }, [booking?.listing_snapshot?.type, listing?.city_id, listing?.type]);
+  }, [booking?.listing_snapshot?.city_id, booking?.listing_snapshot?.type, listing?.city_id, listing?.type]);
 
   useEffect(() => {
     if (!showOfferModal) return;
@@ -227,10 +367,17 @@ const CheckoutPage = () => {
     try {
       const latest = await bookingService.getBookingById(booking.id);
       setBooking(latest);
+      const latestHoldRemainingMs = computeHoldRemainingMs(latest);
       const latestExpired =
         latest.status === BOOKING_STATUS.EXPIRED ||
-        (latest.status === BOOKING_STATUS.HOLD && getTimeRemainingMs(latest.hold_expires_at) <= 0);
+        (latest.status === BOOKING_STATUS.HOLD &&
+          latestHoldRemainingMs !== null &&
+          latestHoldRemainingMs <= 0);
       if (latestExpired) {
+        await handleHoldExpired({
+          status: latest.status,
+          hold_expires_at: latest.hold_expires_at,
+        });
         setActionError("Booking hold expired. Recreate booking from the listing page.");
         return null;
       }
@@ -241,6 +388,9 @@ const CheckoutPage = () => {
       setActionError("");
       return updated;
     } catch (err) {
+      if (err?.normalized?.code === "BOOKING_EXPIRED") {
+        await handleHoldExpired(err?.normalized?.details || {});
+      }
       setActionError(formatApplyOfferError(err));
       return null;
     } finally {
@@ -271,10 +421,17 @@ const CheckoutPage = () => {
     try {
       const latest = await bookingService.getBookingById(booking.id);
       setBooking(latest);
+      const latestHoldRemainingMs = computeHoldRemainingMs(latest);
       const latestExpired =
         latest.status === BOOKING_STATUS.EXPIRED ||
-        (latest.status === BOOKING_STATUS.HOLD && getTimeRemainingMs(latest.hold_expires_at) <= 0);
+        (latest.status === BOOKING_STATUS.HOLD &&
+          latestHoldRemainingMs !== null &&
+          latestHoldRemainingMs <= 0);
       if (latestExpired) {
+        await handleHoldExpired({
+          status: latest.status,
+          hold_expires_at: latest.hold_expires_at,
+        });
         setActionError("Booking hold expired. Recreate booking from the listing page.");
         setActionLoading(false);
         return;
@@ -325,6 +482,9 @@ const CheckoutPage = () => {
             setShowOfferModal(false);
             setShowPaymentModal(false);
           } catch (err) {
+            if (err?.normalized?.code === "BOOKING_EXPIRED") {
+              await handleHoldExpired(err?.normalized?.details || {});
+            }
             setActionError(err?.normalized?.message || "Unable to confirm booking.");
           } finally {
             setActionLoading(false);
@@ -341,7 +501,30 @@ const CheckoutPage = () => {
       razorpay.open();
       setActionLoading(false);
     } catch (err) {
+      if (err?.normalized?.code === "BOOKING_EXPIRED") {
+        await handleHoldExpired(err?.normalized?.details || {});
+      }
       setActionError(err?.normalized?.message || err?.message || "Unable to initialize payment.");
+      setActionLoading(false);
+    }
+  };
+
+  const onReleaseHold = async () => {
+    if (!booking || booking.status !== BOOKING_STATUS.HOLD) return;
+    const proceed = window.confirm("Cancel this hold and release selected seats/tickets?");
+    if (!proceed) return;
+
+    setActionLoading(true);
+    setActionError("");
+    try {
+      await bookingService.cancelBooking(booking.id, "Session cancelled by user");
+      setShowPaymentModal(false);
+      setShowOfferModal(false);
+      sessionHandledRef.current = true;
+      navigate(selectionPath, { replace: true });
+    } catch (err) {
+      setActionError(err?.normalized?.message || "Unable to cancel hold.");
+    } finally {
       setActionLoading(false);
     }
   };
@@ -414,7 +597,13 @@ const CheckoutPage = () => {
           <p className="text-sm text-muted-foreground mt-2">Payment reference: {booking.payment_ref}</p>
           <div className="mt-5 rounded-lg border p-4 text-left text-sm space-y-1">
             <p className="font-medium">{booking.listing_snapshot?.title}</p>
-            <p className="text-muted-foreground">{occurrence ? formatDateTime(occurrence.start_time) : "--"}</p>
+            <p className="text-muted-foreground">
+              {occurrence?.start_time
+                ? formatDateTime(occurrence.start_time)
+                : booking.occurrence_start_time
+                  ? formatDateTime(booking.occurrence_start_time)
+                  : "--"}
+            </p>
             <p className="text-muted-foreground">
               Seats: {booking.booked_seats?.length ? booking.booked_seats.join(", ") : booking.quantity}
             </p>
@@ -431,25 +620,57 @@ const CheckoutPage = () => {
     );
   }
 
+  if (booking.status === BOOKING_STATUS.EXPIRED) {
+    return (
+      <div className="container mx-auto px-4 md:px-8 py-10">
+        <p className="text-sm text-muted-foreground">Session ended. Redirecting to selection...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto px-4 md:px-8 py-6 pb-16 max-w-2xl">
-      <div className="flex items-center gap-3 mb-5">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <div>
-          <h1 className="font-bold">Checkout</h1>
-          <p className="text-xs text-muted-foreground">
-            Hold expires in {isHoldExpired ? "00:00" : formatCountdown(countdownMs)}
-          </p>
+      <div className="flex items-start justify-between gap-3 mb-5">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div>
+            <h1 className="font-bold">Checkout</h1>
+            <p className="text-xs text-muted-foreground mt-1">
+              Hold expires in{" "}
+              {countdownMs === null ? "--:--" : formatCountdown(countdownMs)}
+            </p>
+          </div>
         </div>
+        {booking.status === BOOKING_STATUS.HOLD ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onReleaseHold}
+            disabled={actionLoading}
+            aria-label="Cancel hold"
+            title="Cancel hold"
+            className="text-destructive hover:text-destructive"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        ) : null}
       </div>
 
-      <div className="rounded-xl border bg-card p-5 space-y-5">
-        <div>
-          <h2 className="text-lg font-semibold">{booking.listing_snapshot?.title}</h2>
+      <section className="rounded-xl border bg-card p-5 space-y-5">
+        <div className="rounded-xl border bg-card p-5">
+          <p className="text-lg font-semibold">{booking.listing_snapshot?.title}</p>
+          <p className="font-semibold">
+            {occurrence?.start_time
+              ? formatDateTime(occurrence.start_time)
+              : booking.occurrence_start_time
+                ? formatDateTime(booking.occurrence_start_time)
+                : "--"}
+          </p>
           <p className="text-sm text-muted-foreground mt-1">
-            {occurrence ? formatDateTime(occurrence.start_time) : "--"}
+            {occurrence?.venue_name || booking.listing_snapshot?.venue_name || booking.listing_snapshot?.address || "--"}
           </p>
           <p className="text-sm text-muted-foreground mt-1">
             {booking.booked_seats?.length ? `Seats: ${booking.booked_seats.join(", ")}` : `Tickets: ${booking.quantity}`}
@@ -483,17 +704,24 @@ const CheckoutPage = () => {
           Choose an offer in the payment window. Only offers matching this booking category will be shown.
         </div>
 
-        <div className="rounded-lg border border-primary/30 bg-primary/10 p-3 text-sm text-primary inline-flex items-center gap-2">
-          <Ticket className="h-4 w-4" />
-          {isHoldExpired ? "Your hold has expired. Recreate booking from listing page." : "This booking is in HOLD until payment is confirmed."}
-        </div>
+        {isHoldExpired ? (
+          <div className="rounded-lg border border-destructive/35 bg-destructive/10 p-3 text-sm text-destructive inline-flex items-center gap-2">
+            <Ticket className="h-4 w-4" />
+            Your hold has expired. Recreate booking from listing page.
+          </div>
+        ) : (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 inline-flex items-center gap-2">
+            <Ticket className="h-4 w-4" />
+            This booking is in HOLD until payment is confirmed.
+          </div>
+        )}
 
         {actionError ? <p className="text-sm text-destructive">{actionError}</p> : null}
 
         <Button className="w-full" onClick={() => setShowPaymentModal(true)} disabled={actionLoading || isHoldExpired}>
           {actionLoading ? "Confirming..." : `Buy ticket ${formatCurrency(booking.final_price, booking.currency)}`}
         </Button>
-      </div>
+      </section>
 
       {showPaymentModal ? (
         <PaymentModal

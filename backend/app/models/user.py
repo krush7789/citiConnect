@@ -21,9 +21,6 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         server_default=UserRole.USER.value,
     )
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
-    is_temporary_password = Column(
-        Boolean, nullable=False, default=False, server_default="false"
-    )
 
     listings = relationship("Listing", back_populates="created_by_user")
     bookings = relationship("Booking", back_populates="user")

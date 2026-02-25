@@ -1,9 +1,10 @@
 import base64
 import hmac
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any
+from uuid import uuid4
 
 import bcrypt
 
@@ -68,7 +69,7 @@ def _decode(token: str) -> dict[str, Any]:
     if exp is None:
         raise TokenDecodeError("Token missing expiration")
 
-    now_ts = int(datetime.now().timestamp())
+    now_ts = int(datetime.now(timezone.utc).timestamp())
     if int(exp) < now_ts:
         raise TokenDecodeError("Token expired")
 
@@ -78,7 +79,7 @@ def _decode(token: str) -> dict[str, Any]:
 def create_access_token(
     payload: dict[str, Any], expires_in_seconds: int | None = None
 ) -> str:
-    expires = datetime.now() + timedelta(
+    expires = datetime.now(timezone.utc) + timedelta(
         seconds=expires_in_seconds or settings.access_token_expire_seconds
     )
     data = payload.copy()
@@ -88,14 +89,18 @@ def create_access_token(
 
 
 def create_refresh_token(
-    payload: dict[str, Any], expires_in_seconds: int | None = None
+    payload: dict[str, Any],
+    expires_in_seconds: int | None = None,
+    *,
+    jti: str | None = None,
 ) -> str:
-    expires = datetime.now() + timedelta(
+    expires = datetime.now(timezone.utc) + timedelta(
         seconds=expires_in_seconds or settings.refresh_token_expire_seconds
     )
     data = payload.copy()
     data["exp"] = int(expires.timestamp())
     data["type"] = "refresh"
+    data["jti"] = (jti or uuid4().hex).strip()
     return _encode(data)
 
 

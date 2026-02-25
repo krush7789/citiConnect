@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -9,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import raise_api_error
-from app.utils.datetime_utils import reference_end_time
+from app.utils.datetime_utils import normalize_datetime, reference_end_time, utcnow
 from app.models.booking import Booking
 from app.models.booking_idempotency import BookingIdempotency
 from app.models.enums import (
@@ -35,10 +34,11 @@ from app.repository.bookings import (
     get_occurrences_by_ids,
     get_offer_by_code,
     get_offer_by_id,
+    get_offers_by_ids,
     get_user_active_hold_for_occurrence,
     get_user_active_locks_for_occurrence,
     get_venue,
-    list_user_bookings,
+    list_user_bookings_scoped,
 )
 from app.schema.booking import (
     ApplyOfferRequest,
@@ -70,6 +70,55 @@ HOLD_MINUTES = 10
 
 def _decimal(value: Any) -> Decimal:
     return Decimal(str(value)).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+
+
+def _dt_lt(left: datetime | None, right: datetime | None) -> bool:
+    left_dt = normalize_datetime(left)
+    right_dt = normalize_datetime(right)
+    if left_dt is None or right_dt is None:
+        return False
+    return left_dt < right_dt
+
+
+def _dt_lte(left: datetime | None, right: datetime | None) -> bool:
+    left_dt = normalize_datetime(left)
+    right_dt = normalize_datetime(right)
+    if left_dt is None or right_dt is None:
+        return False
+    return left_dt <= right_dt
+
+
+def _dt_gt(left: datetime | None, right: datetime | None) -> bool:
+    left_dt = normalize_datetime(left)
+    right_dt = normalize_datetime(right)
+    if left_dt is None or right_dt is None:
+        return False
+    return left_dt > right_dt
+
+
+def _dt_gte(left: datetime | None, right: datetime | None) -> bool:
+    left_dt = normalize_datetime(left)
+    right_dt = normalize_datetime(right)
+    if left_dt is None or right_dt is None:
+        return False
+    return left_dt >= right_dt
+
+
+def _hold_expiry(booking: Booking) -> datetime | None:
+    hold_expires_at = normalize_datetime(booking.hold_expires_at)
+    created_at = normalize_datetime(booking.created_at)
+    if created_at is None:
+        return hold_expires_at
+    if hold_expires_at is None:
+        return created_at + timedelta(minutes=HOLD_MINUTES)
+    if hold_expires_at < created_at:
+        return created_at + timedelta(minutes=HOLD_MINUTES)
+    return hold_expires_at
+
+
+def _iso_utc(value: datetime | None) -> str | None:
+    normalized = normalize_datetime(value)
+    return normalized.isoformat() if normalized else None
 
 
 def _normalize_seat_ids(raw: Any) -> list[str]:
@@ -111,10 +160,10 @@ def _booking_scope_match(
         return (
             booking.status == BookingStatus.CONFIRMED
             and occurrence_end is not None
-            and occurrence_end < now
+            and _dt_lt(occurrence_end, now)
         )
     return booking.status in {BookingStatus.HOLD, BookingStatus.CONFIRMED} and (
-        occurrence_end is None or occurrence_end >= now
+        occurrence_end is None or _dt_gte(occurrence_end, now)
     )
 
 
@@ -134,29 +183,37 @@ def _base_and_tax_from_breakdown(booking: Booking) -> tuple[Decimal, Decimal]:
 
 
 async def _serialize_booking(
-    db: AsyncSession, booking: Booking, now: datetime | None = None
+    db: AsyncSession,
+    booking: Booking,
+    now: datetime | None = None,
+    *,
+    occurrence=None,
+    offer=None,
 ) -> dict[str, Any]:
-    reference = now or datetime.now()
-    occurrence = await get_occurrence(db, booking.occurrence_id, for_update=False)
+    reference = normalize_datetime(now) or utcnow()
+    hold_expires_at = _hold_expiry(booking)
+    resolved_occurrence = occurrence or await get_occurrence(
+        db, booking.occurrence_id, for_update=False
+    )
     reference_end = (
-        reference_end_time(occurrence.start_time, occurrence.end_time)
-        if occurrence
+        reference_end_time(resolved_occurrence.start_time, resolved_occurrence.end_time)
+        if resolved_occurrence
         else None
     )
     hold_active = (
         booking.status == BookingStatus.HOLD
-        and booking.hold_expires_at is not None
-        and booking.hold_expires_at > reference
+        and hold_expires_at is not None
+        and _dt_gt(hold_expires_at, reference)
     )
     can_cancel = booking.status in {BookingStatus.HOLD, BookingStatus.CONFIRMED} and (
-        reference_end is None or reference_end > reference
+        reference_end is None or _dt_gt(reference_end, reference)
     )
 
     applied_offer = None
     if booking.applied_offer_id:
-        offer = await get_offer_by_id(db, booking.applied_offer_id)
-        if offer:
-            applied_offer = {"id": offer.id, "code": offer.code}
+        resolved_offer = offer or await get_offer_by_id(db, booking.applied_offer_id)
+        if resolved_offer:
+            applied_offer = {"id": resolved_offer.id, "code": resolved_offer.code}
 
     base_amount, tax_amount = _base_and_tax_from_breakdown(booking)
 
@@ -164,6 +221,12 @@ async def _serialize_booking(
         "id": booking.id,
         "user_id": booking.user_id,
         "occurrence_id": booking.occurrence_id,
+        "occurrence_start_time": (
+            resolved_occurrence.start_time if resolved_occurrence else None
+        ),
+        "occurrence_end_time": (
+            resolved_occurrence.end_time if resolved_occurrence else None
+        ),
         "listing_snapshot": booking.listing_snapshot,
         "booked_seats": _normalize_seat_ids(booking.booked_seats),
         "ticket_breakdown": booking.ticket_breakdown
@@ -181,11 +244,11 @@ async def _serialize_booking(
         "payment_provider": booking.payment_provider,
         "payment_ref": booking.payment_ref,
         "cancellation_reason": booking.cancellation_reason,
-        "hold_expires_at": booking.hold_expires_at,
+        "hold_expires_at": hold_expires_at,
         "can_confirm": hold_active,
         "can_cancel": can_cancel,
-        "cancellation_deadline": occurrence.start_time
-        if can_cancel and occurrence
+        "cancellation_deadline": resolved_occurrence.start_time
+        if can_cancel and resolved_occurrence
         else None,
         "created_at": booking.created_at,
         "updated_at": booking.updated_at,
@@ -197,7 +260,7 @@ def _occurrence_is_bookable(occurrence, now: datetime) -> bool:
     if occurrence.status != OccurrenceStatus.SCHEDULED:
         return False
     reference_end = reference_end_time(occurrence.start_time, occurrence.end_time)
-    return reference_end is None or reference_end >= now
+    return reference_end is None or _dt_gte(reference_end, now)
 
 
 def _normalize_ticket_request_breakdown(raw: Any) -> dict[str, int]:
@@ -351,10 +414,9 @@ async def create_booking_lock(
     current_user: Any,
     db: AsyncSession,
 ):
-    now = datetime.now()
-    await asyncio.gather(
-        expire_stale_holds(db, now=now), expire_stale_seat_locks(db, now=now)
-    )
+    now = utcnow()
+    await expire_stale_holds(db, now=now)
+    await expire_stale_seat_locks(db, now=now)
 
     occurrence = await get_occurrence(db, payload.occurrence_id, for_update=True)
     if not occurrence:
@@ -382,6 +444,28 @@ async def create_booking_lock(
     if existing_hold and _lock_request_matches_booking(
         existing_hold, payload, seat_ids
     ):
+        refreshed_expiry = now + timedelta(minutes=HOLD_MINUTES)
+        existing_hold.hold_expires_at = refreshed_expiry
+
+        if seat_ids:
+            user_active_locks = await get_user_active_locks_for_occurrence(
+                db,
+                occurrence_id=occurrence.id,
+                user_id=current_user.id,
+                now=now,
+                for_update=True,
+            )
+            selected_seats = {seat.upper() for seat in seat_ids}
+            for user_lock in user_active_locks:
+                seat_key = user_lock.seat_id.upper()
+                if seat_key in selected_seats:
+                    user_lock.status = SeatLockStatus.ACTIVE
+                    user_lock.expires_at = refreshed_expiry
+                else:
+                    user_lock.status = SeatLockStatus.RELEASED
+
+        await db.commit()
+        await db.refresh(existing_hold)
         return {"booking": await _serialize_booking(db, existing_hold, now=now)}
 
     seat_layout = normalize_seat_layout(occurrence.seat_layout)
@@ -430,21 +514,19 @@ async def create_booking_lock(
                 {"seat_id": unavailable_confirmed},
             )
 
-        active_locks, user_active_locks = await asyncio.gather(
-            get_active_locks_for_seats(
-                db,
-                occurrence_id=occurrence.id,
-                seat_ids=seat_ids,
-                now=now,
-                for_update=True,
-            ),
-            get_user_active_locks_for_occurrence(
-                db,
-                occurrence_id=occurrence.id,
-                user_id=current_user.id,
-                now=now,
-                for_update=True,
-            ),
+        active_locks = await get_active_locks_for_seats(
+            db,
+            occurrence_id=occurrence.id,
+            seat_ids=seat_ids,
+            now=now,
+            for_update=True,
+        )
+        user_active_locks = await get_user_active_locks_for_occurrence(
+            db,
+            occurrence_id=occurrence.id,
+            user_id=current_user.id,
+            now=now,
+            for_update=True,
         )
         lock_by_seat = {lock.seat_id.upper(): lock for lock in active_locks}
         unavailable_locked = next(
@@ -554,7 +636,7 @@ async def apply_offer_to_booking(
     current_user: Any,
     db: AsyncSession,
 ):
-    now = datetime.now()
+    now = utcnow()
     await expire_stale_holds(db, now=now)
 
     booking = await get_booking(
@@ -562,6 +644,7 @@ async def apply_offer_to_booking(
     )
     if not booking:
         raise_api_error(404, "NOT_FOUND", "Booking not found")
+    hold_expires_at = _hold_expiry(booking)
     if booking.status == BookingStatus.EXPIRED:
         raise_api_error(
             400,
@@ -569,10 +652,8 @@ async def apply_offer_to_booking(
             "Booking hold expired",
             {
                 "status": booking.status.value,
-                "hold_expires_at": booking.hold_expires_at.isoformat()
-                if booking.hold_expires_at
-                else None,
-                "server_time": now.isoformat(),
+                "hold_expires_at": _iso_utc(hold_expires_at),
+                "server_time": _iso_utc(now),
             },
         )
     if booking.status != BookingStatus.HOLD:
@@ -582,7 +663,7 @@ async def apply_offer_to_booking(
             "Booking is not in HOLD",
             {"status": booking.status.value},
         )
-    if booking.hold_expires_at and booking.hold_expires_at <= now:
+    if _dt_lte(hold_expires_at, now):
         booking.status = BookingStatus.EXPIRED
         await db.commit()
         raise_api_error(
@@ -591,8 +672,8 @@ async def apply_offer_to_booking(
             "Booking hold expired",
             {
                 "status": BookingStatus.EXPIRED.value,
-                "hold_expires_at": booking.hold_expires_at.isoformat(),
-                "server_time": now.isoformat(),
+                "hold_expires_at": _iso_utc(hold_expires_at),
+                "server_time": _iso_utc(now),
             },
         )
 
@@ -610,9 +691,9 @@ async def apply_offer_to_booking(
         raise_api_error(400, "OFFER_INVALID", "Coupon code is invalid")
     if not offer.is_active:
         raise_api_error(400, "OFFER_NOT_APPLICABLE", "Offer is inactive")
-    if offer.valid_from and now < offer.valid_from:
+    if _dt_lt(now, offer.valid_from):
         raise_api_error(400, "OFFER_NOT_APPLICABLE", "Offer is not active yet")
-    if offer.valid_until and now > offer.valid_until:
+    if _dt_gt(now, offer.valid_until):
         raise_api_error(400, "OFFER_NOT_APPLICABLE", "Offer has expired")
 
     listing = None
@@ -750,7 +831,7 @@ async def create_razorpay_payment_order(
     current_user: Any,
     db: AsyncSession,
 ):
-    now = datetime.now()
+    now = utcnow()
     await expire_stale_holds(db, now=now)
 
     booking = await get_booking(
@@ -758,11 +839,12 @@ async def create_razorpay_payment_order(
     )
     if not booking:
         raise_api_error(404, "NOT_FOUND", "Booking not found")
+    hold_expires_at = _hold_expiry(booking)
     if booking.status == BookingStatus.EXPIRED:
         raise_api_error(400, "BOOKING_EXPIRED", "Booking hold expired")
     if booking.status != BookingStatus.HOLD:
         raise_api_error(400, "BOOKING_NOT_PENDING", "Booking is not in HOLD")
-    if booking.hold_expires_at and booking.hold_expires_at <= now:
+    if _dt_lte(hold_expires_at, now):
         booking.status = BookingStatus.EXPIRED
         await db.commit()
         raise_api_error(400, "BOOKING_EXPIRED", "Booking hold expired")
@@ -817,12 +899,18 @@ async def confirm_booking(
     if not x_idempotency_key:
         raise_api_error(400, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required")
 
-    now = datetime.now()
+    now = utcnow()
     await expire_stale_holds(db, now=now)
     await expire_stale_seat_locks(db, now=now)
 
     existing_idempotency = await get_booking_idempotency(db, x_idempotency_key)
     if existing_idempotency:
+        if existing_idempotency.booking_id != booking_id:
+            raise_api_error(
+                409,
+                "IDEMPOTENCY_KEY_REUSED",
+                "Idempotency key has already been used for a different booking",
+            )
         existing_booking = await get_booking(
             db,
             existing_idempotency.booking_id,
@@ -840,11 +928,12 @@ async def confirm_booking(
     )
     if not booking:
         raise_api_error(404, "NOT_FOUND", "Booking not found")
+    hold_expires_at = _hold_expiry(booking)
     if booking.status == BookingStatus.EXPIRED:
         raise_api_error(400, "BOOKING_EXPIRED", "Booking hold expired")
     if booking.status != BookingStatus.HOLD:
         raise_api_error(400, "BOOKING_NOT_PENDING", "Booking is not in HOLD")
-    if booking.hold_expires_at and booking.hold_expires_at <= now:
+    if _dt_lte(hold_expires_at, now):
         booking.status = BookingStatus.EXPIRED
         await db.commit()
         raise_api_error(400, "BOOKING_EXPIRED", "Booking hold expired")
@@ -895,7 +984,7 @@ async def confirm_booking(
                 if seat not in locks_by_seat
                 or locks_by_seat[seat].user_id != current_user.id
                 or locks_by_seat[seat].status != SeatLockStatus.ACTIVE
-                or locks_by_seat[seat].expires_at <= now
+                or _dt_lte(locks_by_seat[seat].expires_at, now)
             ),
             None,
         )
@@ -964,6 +1053,45 @@ async def confirm_booking(
     else:
         booking.payment_provider = payment_method or "MOCK"
         booking.payment_ref = f"pay_{uuid4().hex[:20]}"
+
+    if booking.applied_offer_id:
+        offer = await get_offer_by_id(
+            db, booking.applied_offer_id, for_update=True
+        )
+        if not offer or not offer.is_active:
+            raise_api_error(400, "OFFER_NOT_APPLICABLE", "Offer is inactive")
+        if _dt_lt(now, offer.valid_from):
+            raise_api_error(400, "OFFER_NOT_APPLICABLE", "Offer is not active yet")
+        if _dt_gt(now, offer.valid_until):
+            raise_api_error(400, "OFFER_NOT_APPLICABLE", "Offer has expired")
+
+        if offer.usage_limit is not None:
+            total_usage = await count_offer_usage(db, offer.id)
+            if total_usage >= offer.usage_limit:
+                raise_api_error(
+                    400,
+                    "OFFER_NOT_APPLICABLE",
+                    "Offer usage limit reached",
+                    {
+                        "offer_code": offer.code,
+                        "usage_limit": int(offer.usage_limit),
+                        "current_total_usage": int(total_usage),
+                    },
+                )
+
+        if offer.user_usage_limit is not None:
+            user_usage = await count_offer_usage(db, offer.id, user_id=current_user.id)
+            if user_usage >= offer.user_usage_limit:
+                raise_api_error(
+                    400,
+                    "OFFER_NOT_APPLICABLE",
+                    "User offer usage limit reached",
+                    {
+                        "offer_code": offer.code,
+                        "user_usage_limit": int(offer.user_usage_limit),
+                        "current_user_usage": int(user_usage),
+                    },
+                )
 
     booking.status = BookingStatus.CONFIRMED
     booking.hold_expires_at = None
@@ -1048,29 +1176,36 @@ async def get_bookings(
             {"fields": {"scope": "Invalid scope"}},
         )
 
-    now = datetime.now()
+    now = utcnow()
     await expire_stale_holds(db, now=now)
+    await expire_stale_seat_locks(db, now=now)
     await db.commit()
 
-    bookings = await list_user_bookings(db, user_id=current_user.id)
+    bookings, total = await list_user_bookings_scoped(
+        db,
+        user_id=current_user.id,
+        scope=scope,
+        now=now,
+        page=page,
+        page_size=page_size,
+    )
     occurrences = await get_occurrences_by_ids(
         db, [booking.occurrence_id for booking in bookings]
     )
-
-    scoped = []
-    for booking in bookings:
-        occurrence = occurrences.get(booking.occurrence_id)
-        reference_end = (
-            reference_end_time(occurrence.start_time, occurrence.end_time)
-            if occurrence
-            else None
+    offers = await get_offers_by_ids(
+        db,
+        [booking.applied_offer_id for booking in bookings if booking.applied_offer_id],
+    )
+    items = [
+        await _serialize_booking(
+            db,
+            booking,
+            now=now,
+            occurrence=occurrences.get(booking.occurrence_id),
+            offer=offers.get(booking.applied_offer_id) if booking.applied_offer_id else None,
         )
-        if _booking_scope_match(scope, booking, reference_end, now):
-            scoped.append(booking)
-
-    total = len(scoped)
-    paged = scoped[(page - 1) * page_size : page * page_size]
-    items = [await _serialize_booking(db, booking, now=now) for booking in paged]
+        for booking in bookings
+    ]
     return build_paginated_response(items, page=page, page_size=page_size, total=total)
 
 
@@ -1080,8 +1215,9 @@ async def get_booking_by_id(
     current_user: Any,
     db: AsyncSession,
 ):
-    now = datetime.now()
+    now = utcnow()
     await expire_stale_holds(db, now=now)
+    await expire_stale_seat_locks(db, now=now)
     await db.commit()
 
     booking = await get_booking(
@@ -1099,7 +1235,7 @@ async def cancel_booking(
     current_user: Any,
     db: AsyncSession,
 ):
-    now = datetime.now()
+    now = utcnow()
     await expire_stale_holds(db, now=now)
     await expire_stale_seat_locks(db, now=now)
 
@@ -1128,6 +1264,15 @@ async def cancel_booking(
             for lock in locks:
                 if lock.user_id == current_user.id:
                     lock.status = SeatLockStatus.RELEASED
+        booking.status = BookingStatus.EXPIRED
+        booking.cancellation_reason = payload.reason or "Session released by user"
+        booking.hold_expires_at = None
+        await db.commit()
+        return {
+            "message": "Booking hold released successfully",
+            "booking_id": booking.id,
+            "refund_status": None,
+        }
     elif booking.status == BookingStatus.CONFIRMED:
         occurrence.capacity_remaining = min(
             occurrence.capacity_total,

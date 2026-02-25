@@ -38,6 +38,8 @@ class BookingItem(BaseModel):
     id: UUID
     user_id: UUID
     occurrence_id: UUID
+    occurrence_start_time: datetime | None = None
+    occurrence_end_time: datetime | None = None
     listing_snapshot: dict | None = None
     booked_seats: list[str] | None = None
     ticket_breakdown: dict | None = None

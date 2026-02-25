@@ -1,7 +1,5 @@
 from __future__ import annotations
-
-import asyncio
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -12,7 +10,7 @@ from app.core.errors import raise_api_error
 from app.models.enums import ListingType
 from app.repository import listings as listings_repository
 from app.services.listing import format_listing_list_item
-from app.utils.datetime_utils import to_end_of_day, to_start_of_day
+from app.utils.datetime_utils import to_end_of_day, to_start_of_day, utcnow
 from app.utils.pagination import build_paginated_response
 from app.utils.pricing import normalize_ticket_pricing
 from app.utils.seat_layout import normalize_seat_layout, sort_seat_id_key
@@ -254,7 +252,7 @@ async def get_listing_occurrences_by_listing_id(
 async def get_occurrence_seat_map(
     db: AsyncSession, occurrence_id: UUID
 ) -> dict[str, Any]:
-    now = datetime.now()
+    now = utcnow()
     expired_count = await listings_repository.expire_stale_locks(db, now=now)
     if expired_count:
         await listings_repository.commit(db)
@@ -341,9 +339,9 @@ async def get_occurrence_seat_map(
             for col in range(1, columns + 1):
                 all_seats.add(f"{row_name}{col}")
 
-    booked, locked = await asyncio.gather(
-        listings_repository.fetch_confirmed_booked_seats(db, occurrence.id),
-        listings_repository.fetch_active_seat_locks(db, occurrence.id, now=now),
+    booked = await listings_repository.fetch_confirmed_booked_seats(db, occurrence.id)
+    locked = await listings_repository.fetch_active_seat_locks(
+        db, occurrence.id, now=now
     )
     all_seats.update(booked)
     all_seats.update(locked.keys())

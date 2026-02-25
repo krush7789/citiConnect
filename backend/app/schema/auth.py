@@ -1,8 +1,18 @@
+import re
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import UserRole
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _normalize_email(value: str) -> str:
+    normalized = value.strip().lower()
+    if not EMAIL_PATTERN.match(normalized):
+        raise ValueError("Invalid email address")
+    return normalized
 
 
 class RegisterRequest(BaseModel):
@@ -11,14 +21,29 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
 
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_email(value)
+
 
 class LoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=8, max_length=128)
 
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_email(value)
+
 
 class ForgotPasswordRequest(BaseModel):
     email: str = Field(min_length=5, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_email(value)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -32,7 +57,6 @@ class AuthUser(BaseModel):
     name: str
     email: str
     role: UserRole
-    is_temporary_password: bool
 
 
 class AuthResponse(BaseModel):

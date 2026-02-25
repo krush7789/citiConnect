@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +13,22 @@ from app.core.errors import add_exception_handlers
 from app.services.scheduler import shutdown_scheduler, start_scheduler
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title=settings.app_name)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await create_tables()
+    if settings.enable_scheduler:
+        start_scheduler()
+    else:
+        logger.info("Scheduler startup skipped because ENABLE_SCHEDULER is false.")
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 add_exception_handlers(app)
 app.add_middleware(
     CORSMiddleware,
@@ -25,20 +41,6 @@ app.add_middleware(
 
 app.include_router(router)
 add_pagination(app)
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    await create_tables()
-    if settings.enable_scheduler:
-        start_scheduler()
-    else:
-        logger.info("Scheduler startup skipped because ENABLE_SCHEDULER is false.")
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    shutdown_scheduler()
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

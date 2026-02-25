@@ -18,7 +18,7 @@ class UserOfferUsage(Base, UUIDPrimaryKeyMixin):
     booking_id = Column(
         PGUUID(as_uuid=True), ForeignKey("bookings.id"), nullable=False, index=True
     )
-    used_at = Column(DateTime(), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=False)
 
     user = relationship("User", back_populates="offer_usages")
     offer = relationship("Offer", back_populates="usages")

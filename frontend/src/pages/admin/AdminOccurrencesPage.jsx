@@ -4,7 +4,7 @@ import * as Yup from "yup";
 import { useNavigate, useParams } from "react-router-dom";
 import { adminService, cityService } from "@/api/services";
 import { OCCURRENCE_STATUS } from "@/lib/enums";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, toApiDateTimeMs } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,8 +64,9 @@ const parseJsonValue = (value) => {
 
 const toDateTimeInputValue = (value) => {
   if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "";
+  const parsedMs = toApiDateTimeMs(value);
+  if (!Number.isFinite(parsedMs)) return "";
+  const parsed = new Date(parsedMs);
   const localTime = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
   return localTime.toISOString().slice(0, 16);
 };

@@ -9,6 +9,7 @@ const BASE_URL = RAW_BASE.endsWith("/") ? RAW_BASE.slice(0, -1) : RAW_BASE;
 const authFreePaths = ["/auth/login", "/auth/register", "/auth/forgot-password", "/auth/refresh"];
 
 let unauthorizedHandler = () => {};
+let refreshPromise = null;
 
 export const setUnauthorizedHandler = (handler) => {
   unauthorizedHandler = typeof handler === "function" ? handler : () => {};
@@ -42,6 +43,25 @@ const refreshClient = axios.create({
 
 const isAuthFreePath = (url = "") => authFreePaths.some((path) => url.includes(path));
 
+const refreshAccessToken = async () => {
+  if (!refreshPromise) {
+    refreshPromise = refreshClient
+      .post("/auth/refresh", {})
+      .then((response) => {
+        const nextToken = response.data?.access_token;
+        if (!nextToken) {
+          throw new Error("Missing access token in refresh response");
+        }
+        setStoredToken(nextToken);
+        return nextToken;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+};
+
 api.interceptors.request.use((config) => {
   const token = getStoredToken();
   if (token) {
@@ -70,12 +90,7 @@ api.interceptors.response.use(
 
     originalRequest._retry = true;
     try {
-      const refreshResponse = await refreshClient.post("/auth/refresh", {});
-      const nextToken = refreshResponse.data?.access_token;
-      if (!nextToken) {
-        throw new Error("Missing access token in refresh response");
-      }
-      setStoredToken(nextToken);
+      const nextToken = await refreshAccessToken();
       originalRequest.headers = originalRequest.headers || {};
       originalRequest.headers.Authorization = `Bearer ${nextToken}`;
       return api(originalRequest);
