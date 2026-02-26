@@ -11,6 +11,7 @@ from app.models.enums import ListingType
 from app.schema.admin import (
     AdminAuditLogItem,
     AdminBookingItem,
+    AdminCityMutationResponse,
     AdminDashboardDrillResponse,
     AdminDashboardResponse,
     AdminListingCreateResponse,
@@ -25,6 +26,7 @@ from app.schema.admin import (
     AdminOfferMutationResponse,
     AdminVenueCreateResponse,
     CityCreateRequest,
+    CityUpdateRequest,
     ListingCreateRequest,
     ListingUpdateRequest,
     OccurrenceCancelRequest,
@@ -33,6 +35,7 @@ from app.schema.admin import (
     OfferCreateRequest,
     OfferUpdateRequest,
     VenueCreateRequest,
+    VenueUpdateRequest,
 )
 from app.schema.common import MessageResponse, PaginatedResponse
 from app.services.admin import (
@@ -52,8 +55,11 @@ from app.services.admin import (
     get_admin_occurrences_page,
     get_admin_offers_page,
     update_admin_listing_entry,
+    update_admin_city_entry,
     update_admin_occurrence_entry,
     update_admin_offer_entry,
+    update_admin_venue_entry,
+    soft_delete_admin_venue_entry,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -116,6 +122,7 @@ async def get_dashboard_drill(
     page_size: int = Query(default=25, ge=1, le=100),
     sort_by: str | None = Query(default=None),
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
+    q: str | None = Query(default=None),
     _: object = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -133,6 +140,7 @@ async def get_dashboard_drill(
         page_size=page_size,
         sort_by=sort_by,
         sort_dir=sort_dir,
+        q=q,
     )
 
 
@@ -285,6 +293,7 @@ async def cancel_admin_occurrence(
 @router.get("/bookings", response_model=PaginatedResponse[AdminBookingItem])
 async def get_admin_bookings(
     status: str | None = Query(default=None),
+    listing_type: ListingType | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     listing: str | None = Query(default=None),
@@ -297,6 +306,7 @@ async def get_admin_bookings(
     return await get_admin_bookings_page(
         db,
         status=status,
+        listing_type=listing_type,
         date_from=date_from,
         date_to=date_to,
         listing=listing,
@@ -383,6 +393,21 @@ async def create_city(
     )
 
 
+@router.patch("/cities/{city_id}", response_model=AdminCityMutationResponse)
+async def update_city(
+    city_id: UUID,
+    payload: CityUpdateRequest,
+    admin_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await update_admin_city_entry(
+        db,
+        city_id=city_id,
+        payload=payload,
+        admin_user_id=admin_user.id,
+    )
+
+
 @router.post("/venues", response_model=AdminVenueCreateResponse)
 async def create_venue(
     payload: VenueCreateRequest,
@@ -392,5 +417,33 @@ async def create_venue(
     return await create_admin_venue_entry(
         db,
         payload=payload,
+        admin_user_id=admin_user.id,
+    )
+
+
+@router.patch("/venues/{venue_id}", response_model=AdminVenueCreateResponse)
+async def update_venue(
+    venue_id: UUID,
+    payload: VenueUpdateRequest,
+    admin_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await update_admin_venue_entry(
+        db,
+        venue_id=venue_id,
+        payload=payload,
+        admin_user_id=admin_user.id,
+    )
+
+
+@router.delete("/venues/{venue_id}", response_model=AdminVenueCreateResponse)
+async def soft_delete_venue(
+    venue_id: UUID,
+    admin_user=Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await soft_delete_admin_venue_entry(
+        db,
+        venue_id=venue_id,
         admin_user_id=admin_user.id,
     )

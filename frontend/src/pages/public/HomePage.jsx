@@ -26,8 +26,8 @@ const HomePage = () => {
     setLoading(true);
     Promise.all([
       listingService.getListings({ city_id: cityId, is_featured: true, page: 1, page_size: 10 }),
-      listingService.getListings({ city_id: cityId, types: "MOVIE", sort: "newest", page: 1, page_size: 12 }),
-      listingService.getListings({ city_id: cityId, types: "EVENT", sort: "date", page: 1, page_size: 12 }),
+      listingService.getListings({ city_id: cityId, types: "MOVIE", sort: "popularity", page: 1, page_size: 12 }),
+      listingService.getListings({ city_id: cityId, types: "EVENT", sort: "popularity", page: 1, page_size: 12 }),
       listingService.getListings({ city_id: cityId, types: "ACTIVITY", sort: "popularity", page: 1, page_size: 12 }),
     ])
       .then(([featuredRes, moviesRes, eventsRes, activitiesRes]) => {

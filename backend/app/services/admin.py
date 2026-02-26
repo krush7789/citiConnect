@@ -30,6 +30,7 @@ from app.models.venue import Venue
 from app.repository import admin as admin_repository
 from app.schema.admin import (
     CityCreateRequest,
+    CityUpdateRequest,
     ListingCreateRequest,
     ListingUpdateRequest,
     OccurrenceCancelRequest,
@@ -38,12 +39,11 @@ from app.schema.admin import (
     OfferCreateRequest,
     OfferUpdateRequest,
     VenueCreateRequest,
+    VenueUpdateRequest,
 )
 from app.services.email import send_occurrence_cancelled_email
 from app.services.geocoding import geocode_address
 from app.utils.datetime_utils import (
-    IST_TIMEZONE,
-    IST_TIMEZONE_NAME,
     normalize_datetime,
     reference_end_time,
     resolve_ist_range_for_preset,
@@ -290,11 +290,6 @@ def resolve_auto_interval(
     return "day" if days <= 92 else "week"
 
 
-def previous_period(start_utc: datetime, end_utc: datetime) -> tuple[datetime, datetime]:
-    period_span = end_utc - start_utc
-    return start_utc - period_span, start_utc
-
-
 def calculate_growth_pct(current: int | float, previous: int | float) -> float | None:
     if not previous:
         return None
@@ -322,18 +317,6 @@ def normalize_drill_sort(metric: str, sort_by: str | None, sort_dir: str) -> tup
         )
 
     return normalized_sort_by, normalized_sort_dir
-
-
-def resolve_effective_ist_dates(
-    *,
-    start_utc: datetime,
-    end_utc: datetime,
-) -> tuple[date, date]:
-    start_date = start_utc.astimezone(IST_TIMEZONE).date()
-    inclusive_end_date = (end_utc - timedelta(microseconds=1)).astimezone(
-        IST_TIMEZONE
-    ).date()
-    return start_date, inclusive_end_date
 
 
 def with_series_growth(series_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -605,6 +588,85 @@ def validate_occurrence_window(
         )
 
 
+def validate_occurrence_start_not_past(
+    start_time: datetime, *, reference_time: datetime | None = None
+) -> None:
+    normalized_start = normalize_datetime(start_time)
+    normalized_now = normalize_datetime(reference_time) or normalize_datetime(utcnow())
+    if (
+        normalized_start is not None
+        and normalized_now is not None
+        and normalized_start < normalized_now
+    ):
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"start_time": "start_time cannot be in the past"}},
+        )
+
+
+def validate_offer_validity_window(
+    valid_from: datetime | None, valid_until: datetime | None
+) -> None:
+    normalized_from = normalize_datetime(valid_from)
+    normalized_until = normalize_datetime(valid_until)
+    today = (normalize_datetime(utcnow()) or utcnow()).date()
+
+    fields: dict[str, str] = {}
+    if normalized_from is not None and normalized_from.date() < today:
+        fields["valid_from"] = "valid_from cannot be in the past"
+    if normalized_until is not None and normalized_until.date() < today:
+        fields["valid_until"] = "valid_until cannot be in the past"
+    if (
+        normalized_from is not None
+        and normalized_until is not None
+        and normalized_until < normalized_from
+    ):
+        fields["valid_until"] = "valid_until must be later than or equal to valid_from"
+
+    if fields:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": fields},
+        )
+
+
+def normalize_occurrence_sub_location_key(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def occurrence_windows_overlap(
+    start_time: datetime,
+    end_time: datetime | None,
+    other_start_time: datetime,
+    other_end_time: datetime | None,
+) -> bool:
+    reference_end = reference_end_time(start_time, end_time) or start_time
+    other_reference_end = (
+        reference_end_time(other_start_time, other_end_time) or other_start_time
+    )
+    return start_time <= other_reference_end and other_start_time <= reference_end
+
+
+def raise_occurrence_conflict(conflicting_occurrence_id: UUID | None = None) -> None:
+    details: dict[str, Any] = {
+        "fields": {
+            "start_time": "Conflicts with another occurrence at this venue and sub-location"
+        }
+    }
+    if conflicting_occurrence_id is not None:
+        details["conflicting_occurrence_id"] = str(conflicting_occurrence_id)
+    raise_api_error(
+        409,
+        "OCCURRENCE_CONFLICT",
+        "Occurrence time conflicts with an existing occurrence",
+        details,
+    )
+
+
 def pagination_payload(
     items: list[dict[str, Any]], page: int, page_size: int, total: int
 ) -> dict[str, Any]:
@@ -734,9 +796,6 @@ async def get_admin_dashboard(
         date_from=date_from,
         date_to=date_to,
     )
-    previous_start_utc, previous_end_utc = previous_period(
-        current_start_utc, current_end_utc
-    )
     resolved_interval = resolve_auto_interval(
         start_utc=current_start_utc,
         end_utc=current_end_utc,
@@ -746,22 +805,11 @@ async def get_admin_dashboard(
     now = utcnow()
     start_of_day = datetime.combine(now.date(), time.min, tzinfo=now.tzinfo)
     next_day = start_of_day + timedelta(days=1)
-    week_ago = now - timedelta(days=7)
 
     payload = await admin_repository.fetch_dashboard_payload(
         db,
         start_of_day=start_of_day,
         next_day=next_day,
-        week_ago=week_ago,
-    )
-    analytics_kpis = await admin_repository.fetch_dashboard_analytics_kpis(
-        db,
-        current_start_utc=current_start_utc,
-        current_end_utc=current_end_utc,
-        previous_start_utc=previous_start_utc,
-        previous_end_utc=previous_end_utc,
-        city_id=city_id,
-        listing_type=listing_type,
     )
     analytics_series = await admin_repository.fetch_dashboard_analytics_series(
         db,
@@ -780,31 +828,10 @@ async def get_admin_dashboard(
         source_dimension=normalized_source_dimension,
         limit=normalized_top_n,
     )
-    usage_by_region = await admin_repository.fetch_dashboard_usage_by_region(
-        db,
-        start_utc=current_start_utc,
-        end_utc=current_end_utc,
-        city_id=city_id,
-        listing_type=listing_type,
-        limit=normalized_top_n,
-    )
-    event_attendance_top = await admin_repository.fetch_dashboard_event_attendance(
-        db,
-        start_utc=current_start_utc,
-        end_utc=current_end_utc,
-        city_id=city_id,
-        listing_type=listing_type,
-        limit=normalized_top_n,
-    )
 
     total_revenue = payload["total_revenue"] or Decimal("0")
     recent_rows = payload["recent_rows"]
     top_rows = payload["top_rows"]
-    category_rows = payload["category_rows"]
-    period_from_ist, period_to_ist = resolve_effective_ist_dates(
-        start_utc=current_start_utc,
-        end_utc=current_end_utc,
-    )
 
     return {
         "stats": {
@@ -812,7 +839,6 @@ async def get_admin_dashboard(
             "active_listings": payload["active_listings"],
             "total_bookings": payload["total_bookings"],
             "bookings_today": payload["bookings_today"],
-            "bookings_this_week": payload["bookings_this_week"],
             "active_users": payload["active_users"],
             "total_revenue": float(total_revenue),
         },
@@ -836,31 +862,9 @@ async def get_admin_dashboard(
             }
             for row in top_rows
         ],
-        "category_sales": [
-            {
-                "category": row[0] or "Uncategorized",
-                "total_bookings": int(row[1] or 0),
-                "total_sales": float(row[2] or 0),
-            }
-            for row in category_rows
-        ],
-        "analytics_kpis": analytics_kpis,
         "analytics_series": with_series_growth(analytics_series),
         "analytics_breakdowns": {
             "revenue_sources": revenue_sources,
-            "usage_by_region": usage_by_region,
-            "event_attendance_top": event_attendance_top,
-        },
-        "filters_applied": {
-            "preset": normalized_preset,
-            "date_from": period_from_ist,
-            "date_to": period_to_ist,
-            "city_id": city_id,
-            "listing_type": listing_type,
-            "interval": resolved_interval,
-            "source_dimension": normalized_source_dimension,
-            "top_n": normalized_top_n,
-            "timezone": IST_TIMEZONE_NAME,
         },
     }
 
@@ -880,6 +884,7 @@ async def get_admin_dashboard_drill_page(
     page_size: int = DEFAULT_DRILL_PAGE_SIZE,
     sort_by: str | None = None,
     sort_dir: str = "desc",
+    q: str | None = None,
 ) -> dict[str, Any]:
     normalized_metric = ensure_valid_dashboard_metric(metric)
     normalized_preset = ensure_valid_preset(preset)
@@ -950,11 +955,15 @@ async def get_admin_dashboard_drill_page(
             sort_dir=normalized_sort_dir,
         )
     else:
+        query_text = normalize_optional_text(q)
+        user_uuid = parse_uuid_or_none(query_text)
         columns = ["id", "name", "email", "created_at"]
         items, total = await admin_repository.fetch_dashboard_drill_new_users(
             db,
             start_utc=start_utc,
             end_utc=end_utc,
+            query_text=query_text,
+            user_uuid=user_uuid,
             page=normalized_page,
             page_size=normalized_page_size,
             sort_by=normalized_sort_by,
@@ -1157,7 +1166,7 @@ async def update_admin_listing_entry(
     if payload.is_featured is not None:
         listing.is_featured = payload.is_featured
         diff["is_featured"] = payload.is_featured
-    if payload.offer_text is not None:
+    if "offer_text" in payload.model_fields_set:
         listing.offer_text = normalize_optional_text(payload.offer_text)
         diff["offer_text"] = listing.offer_text
     if payload.cover_image_url is not None:
@@ -1390,6 +1399,7 @@ async def create_admin_occurrence_entries(
     )
 
     created: list[Occurrence] = []
+    creation_reference_time = utcnow()
     for entry in payload.occurrences:
         start_time = normalize_datetime(entry.start_time)
         end_time = normalize_datetime(entry.end_time)
@@ -1401,6 +1411,9 @@ async def create_admin_occurrence_entries(
                 {"fields": {"start_time": "start_time is required"}},
             )
         validate_occurrence_window(start_time, end_time)
+        validate_occurrence_start_not_past(
+            start_time, reference_time=creation_reference_time
+        )
 
         venue = await admin_repository.get_venue(db, entry.venue_id)
         if not venue:
@@ -1413,6 +1426,42 @@ async def create_admin_occurrence_entries(
                 {"fields": {"venue_id": "Venue does not belong to listing city"}},
             )
 
+        normalized_sub_location = normalize_title_text(entry.provider_sub_location)
+        conflict_sub_location = normalize_occurrence_sub_location_key(
+            normalized_sub_location
+        )
+
+        in_request_conflict = next(
+            (
+                pending
+                for pending in created
+                if pending.venue_id == venue.id
+                and normalize_occurrence_sub_location_key(
+                    pending.provider_sub_location
+                )
+                == conflict_sub_location
+                and occurrence_windows_overlap(
+                    start_time,
+                    end_time,
+                    pending.start_time,
+                    pending.end_time,
+                )
+            ),
+            None,
+        )
+        if in_request_conflict is not None:
+            raise_occurrence_conflict()
+
+        existing_conflict = await admin_repository.find_conflicting_occurrence(
+            db,
+            venue_id=venue.id,
+            start_time=start_time,
+            end_time=end_time,
+            provider_sub_location=normalized_sub_location,
+        )
+        if existing_conflict is not None:
+            raise_occurrence_conflict(existing_conflict.id)
+
         created.append(
             Occurrence(
                 listing_id=listing.id,
@@ -1420,9 +1469,7 @@ async def create_admin_occurrence_entries(
                 city_id=venue.city_id if allow_cross_city_venues else listing.city_id,
                 start_time=start_time,
                 end_time=end_time,
-                provider_sub_location=normalize_title_text(
-                    entry.provider_sub_location
-                ),
+                provider_sub_location=normalized_sub_location,
                 capacity_total=int(entry.capacity_total),
                 capacity_remaining=int(entry.capacity_total),
                 ticket_pricing=normalize_json_dict(entry.ticket_pricing),
@@ -1502,15 +1549,8 @@ async def update_admin_occurrence_entry(
 
     validate_occurrence_window(next_start, next_end)
 
-    diff: dict[str, Any] = {}
-    if "start_time" in payload.model_fields_set:
-        occurrence.start_time = next_start
-        diff["start_time"] = next_start.isoformat()
-    if "end_time" in payload.model_fields_set:
-        occurrence.end_time = next_end
-        diff["end_time"] = next_end.isoformat() if next_end else None
-
     venue = await admin_repository.get_venue(db, occurrence.venue_id)
+    next_venue = venue
     if "venue_id" in payload.model_fields_set:
         if payload.venue_id is None:
             raise_api_error(
@@ -1529,6 +1569,50 @@ async def update_admin_occurrence_entry(
                 "Some fields are invalid",
                 {"fields": {"venue_id": "Venue does not belong to listing city"}},
             )
+
+    next_provider_sub_location = occurrence.provider_sub_location
+    if "provider_sub_location" in payload.model_fields_set:
+        next_provider_sub_location = normalize_title_text(
+            payload.provider_sub_location
+        )
+
+    next_status = occurrence.status
+    if "status" in payload.model_fields_set and payload.status is not None:
+        if payload.status == OccurrenceStatus.CANCELLED:
+            raise_api_error(
+                422,
+                "VALIDATION_ERROR",
+                "Some fields are invalid",
+                {
+                    "fields": {
+                        "status": "Use the cancel endpoint to cancel an occurrence"
+                    }
+                },
+            )
+        next_status = payload.status
+
+    if next_status not in {OccurrenceStatus.CANCELLED, OccurrenceStatus.ARCHIVED}:
+        conflict_venue_id = next_venue.id if next_venue else occurrence.venue_id
+        conflict = await admin_repository.find_conflicting_occurrence(
+            db,
+            venue_id=conflict_venue_id,
+            start_time=next_start,
+            end_time=next_end,
+            provider_sub_location=next_provider_sub_location,
+            exclude_occurrence_id=occurrence.id,
+        )
+        if conflict is not None:
+            raise_occurrence_conflict(conflict.id)
+
+    diff: dict[str, Any] = {}
+    if "start_time" in payload.model_fields_set:
+        occurrence.start_time = next_start
+        diff["start_time"] = next_start.isoformat()
+    if "end_time" in payload.model_fields_set:
+        occurrence.end_time = next_end
+        diff["end_time"] = next_end.isoformat() if next_end else None
+
+    if "venue_id" in payload.model_fields_set and next_venue is not None:
         occurrence.venue_id = next_venue.id
         occurrence.city_id = (
             next_venue.city_id if allow_cross_city_venues else listing.city_id
@@ -1538,9 +1622,7 @@ async def update_admin_occurrence_entry(
         diff["city_id"] = str(occurrence.city_id)
 
     if "provider_sub_location" in payload.model_fields_set:
-        occurrence.provider_sub_location = normalize_title_text(
-            payload.provider_sub_location
-        )
+        occurrence.provider_sub_location = next_provider_sub_location
         diff["provider_sub_location"] = occurrence.provider_sub_location
 
     if "capacity_total" in payload.model_fields_set:
@@ -1575,19 +1657,8 @@ async def update_admin_occurrence_entry(
         diff["seat_layout"] = occurrence.seat_layout
 
     if "status" in payload.model_fields_set and payload.status is not None:
-        if payload.status == OccurrenceStatus.CANCELLED:
-            raise_api_error(
-                422,
-                "VALIDATION_ERROR",
-                "Some fields are invalid",
-                {
-                    "fields": {
-                        "status": "Use the cancel endpoint to cancel an occurrence"
-                    }
-                },
-            )
-        occurrence.status = payload.status
-        diff["status"] = payload.status.value
+        occurrence.status = next_status
+        diff["status"] = next_status.value
 
     await add_audit_log(
         db,
@@ -1739,6 +1810,7 @@ async def get_admin_bookings_page(
     db: AsyncSession,
     *,
     status: str | None,
+    listing_type: ListingType | None,
     date_from: date | None,
     date_to: date | None,
     listing: str | None,
@@ -1747,18 +1819,29 @@ async def get_admin_bookings_page(
     page_size: int,
 ) -> dict[str, Any]:
     status_enum = parse_booking_status(status)
+    listing_type_enum = listing_type
+    if date_from and date_to and date_from > date_to:
+        raise_api_error(
+            422,
+            "VALIDATION_ERROR",
+            "Some fields are invalid",
+            {"fields": {"date_to": "date_to must be greater than or equal to date_from"}},
+        )
     from_dt = datetime.combine(date_from, time.min) if date_from else None
     to_dt = datetime.combine(date_to, time.max) if date_to else None
     listing_query_text = listing.strip() if listing and listing.strip() else None
     user_query_text = user.strip() if user and user.strip() else None
+    user_or_booking_uuid = parse_uuid_or_none(user_query_text)
 
     rows, total = await admin_repository.list_admin_bookings(
         db,
         status_enum=status_enum,
+        listing_type_enum=listing_type_enum,
         from_dt=from_dt,
         to_dt=to_dt,
         listing_query_text=listing_query_text,
         user_query_text=user_query_text,
+        user_or_booking_uuid=user_or_booking_uuid,
         page=page,
         page_size=page_size,
     )
@@ -1845,6 +1928,7 @@ async def create_admin_offer_entry(
 
     valid_from = normalize_datetime(payload.valid_from)
     valid_until = normalize_datetime(payload.valid_until)
+    validate_offer_validity_window(valid_from, valid_until)
 
     offer = Offer(
         code=code,
@@ -1926,14 +2010,31 @@ async def update_admin_offer_entry(
     if payload.max_discount_value is not None:
         offer.max_discount_value = payload.max_discount_value
         diff["max_discount_value"] = float(payload.max_discount_value)
-    if payload.valid_from is not None:
-        valid_from = normalize_datetime(payload.valid_from)
-        offer.valid_from = valid_from
-        diff["valid_from"] = valid_from.isoformat() if valid_from else None
-    if payload.valid_until is not None:
-        valid_until = normalize_datetime(payload.valid_until)
-        offer.valid_until = valid_until
-        diff["valid_until"] = valid_until.isoformat() if valid_until else None
+    if (
+        "valid_from" in payload.model_fields_set
+        or "valid_until" in payload.model_fields_set
+    ):
+        next_valid_from = (
+            normalize_datetime(payload.valid_from)
+            if "valid_from" in payload.model_fields_set
+            else offer.valid_from
+        )
+        next_valid_until = (
+            normalize_datetime(payload.valid_until)
+            if "valid_until" in payload.model_fields_set
+            else offer.valid_until
+        )
+        validate_offer_validity_window(next_valid_from, next_valid_until)
+        if "valid_from" in payload.model_fields_set:
+            offer.valid_from = next_valid_from
+            diff["valid_from"] = (
+                next_valid_from.isoformat() if next_valid_from else None
+            )
+        if "valid_until" in payload.model_fields_set:
+            offer.valid_until = next_valid_until
+            diff["valid_until"] = (
+                next_valid_until.isoformat() if next_valid_until else None
+            )
     if payload.usage_limit is not None:
         offer.usage_limit = normalize_limit(payload.usage_limit)
         diff["usage_limit"] = offer.usage_limit
@@ -1993,6 +2094,31 @@ async def get_admin_audit_logs_page(
     return pagination_payload(items, page, page_size, total)
 
 
+async def cancel_future_scheduled_occurrences(
+    db: AsyncSession,
+    *,
+    occurrence_rows: list[Occurrence],
+    reason: str,
+    admin_user_id: UUID,
+) -> int:
+    now = utcnow()
+    cancellable_ids: list[UUID] = []
+    for occurrence in occurrence_rows:
+        reference_end = reference_end_time(occurrence.start_time, occurrence.end_time)
+        if reference_end is None or reference_end >= now:
+            cancellable_ids.append(occurrence.id)
+    cancelled_count = 0
+    for occurrence_id in cancellable_ids:
+        await cancel_admin_occurrence_entry(
+            db,
+            occurrence_id=occurrence_id,
+            payload=OccurrenceCancelRequest(reason=reason),
+            admin_user_id=admin_user_id,
+        )
+        cancelled_count += 1
+    return cancelled_count
+
+
 async def create_admin_city_entry(
     db: AsyncSession,
     *,
@@ -2030,6 +2156,83 @@ async def create_admin_city_entry(
     )
     await admin_repository.commit(db)
     return {"message": "City created successfully"}
+
+
+async def update_admin_city_entry(
+    db: AsyncSession,
+    *,
+    city_id: UUID,
+    payload: CityUpdateRequest,
+    admin_user_id: UUID,
+) -> dict[str, Any]:
+    city = await admin_repository.get_city(db, city_id)
+    if not city:
+        raise_api_error(404, "NOT_FOUND", "City not found")
+
+    diff: dict[str, Any] = {}
+    if payload.name is not None:
+        next_name = to_title_case_words(payload.name)
+        if not next_name:
+            raise_api_error(
+                422,
+                "VALIDATION_ERROR",
+                "Some fields are invalid",
+                {"fields": {"name": "City name is required"}},
+            )
+        duplicate = await admin_repository.find_city_by_name_case_insensitive(
+            db, next_name
+        )
+        if duplicate and duplicate.id != city.id:
+            raise_api_error(409, "DUPLICATE_CITY", "City already exists")
+        city.name = next_name
+        diff["name"] = city.name
+
+    if "state" in payload.model_fields_set:
+        city.state = normalize_title_text(payload.state)
+        diff["state"] = city.state
+
+    if "image_url" in payload.model_fields_set:
+        city.image_url = normalize_optional_text(payload.image_url)
+        diff["image_url"] = city.image_url
+
+    cancelled_occurrences = 0
+    if payload.is_active is not None:
+        was_active = bool(city.is_active)
+        city.is_active = payload.is_active
+        diff["is_active"] = city.is_active
+        if was_active and not city.is_active:
+            occurrence_rows = await admin_repository.list_scheduled_occurrences_for_city(
+                db, city.id
+            )
+            cancelled_occurrences = await cancel_future_scheduled_occurrences(
+                db,
+                occurrence_rows=occurrence_rows,
+                reason="Occurrence cancelled because city was marked inactive by admin",
+                admin_user_id=admin_user_id,
+            )
+            diff["cancelled_occurrences"] = cancelled_occurrences
+
+    await add_audit_log(
+        db,
+        admin_user_id=admin_user_id,
+        action="UPDATE_CITY",
+        entity_type="CITY",
+        entity_id=str(city.id),
+        diff=diff,
+    )
+    await admin_repository.commit(db)
+    await admin_repository.refresh(db, city)
+
+    return {
+        "message": "City updated successfully",
+        "city": {
+            "id": city.id,
+            "name": city.name,
+            "state": city.state,
+            "image_url": city.image_url,
+            "is_active": city.is_active,
+        },
+    }
 
 
 async def create_admin_venue_entry(
@@ -2093,6 +2296,139 @@ async def create_admin_venue_entry(
 
     return {
         "message": "Venue created successfully",
+        "venue": {
+            "id": venue.id,
+            "name": venue.name,
+            "city_id": venue.city_id,
+            "address": venue.address,
+            "venue_type": venue.venue_type.value,
+            "latitude": venue.latitude,
+            "longitude": venue.longitude,
+            "is_active": venue.is_active,
+        },
+    }
+
+
+async def update_admin_venue_entry(
+    db: AsyncSession,
+    *,
+    venue_id: UUID,
+    payload: VenueUpdateRequest,
+    admin_user_id: UUID,
+) -> dict[str, Any]:
+    venue = await admin_repository.get_venue(db, venue_id)
+    if not venue:
+        raise_api_error(404, "NOT_FOUND", "Venue not found")
+
+    diff: dict[str, Any] = {}
+    if payload.name is not None:
+        venue.name = to_title_case_words(payload.name)
+        diff["name"] = venue.name
+
+    if payload.city_id is not None:
+        city = await admin_repository.get_city(db, payload.city_id)
+        if not city:
+            raise_api_error(404, "NOT_FOUND", "City not found")
+        venue.city_id = payload.city_id
+        diff["city_id"] = str(venue.city_id)
+
+    if "address" in payload.model_fields_set:
+        venue.address = normalize_optional_text(payload.address)
+        diff["address"] = venue.address
+
+    if payload.venue_type is not None:
+        venue.venue_type = payload.venue_type
+        diff["venue_type"] = venue.venue_type.value
+
+    if "latitude" in payload.model_fields_set:
+        venue.latitude = payload.latitude
+        diff["latitude"] = venue.latitude
+
+    if "longitude" in payload.model_fields_set:
+        venue.longitude = payload.longitude
+        diff["longitude"] = venue.longitude
+
+    if payload.is_active is not None:
+        was_active = bool(venue.is_active)
+        venue.is_active = payload.is_active
+        diff["is_active"] = venue.is_active
+        if was_active and not venue.is_active:
+            occurrence_rows = (
+                await admin_repository.list_scheduled_occurrences_for_venue(db, venue.id)
+            )
+            cancelled_occurrences = await cancel_future_scheduled_occurrences(
+                db,
+                occurrence_rows=occurrence_rows,
+                reason="Occurrence cancelled because venue was deactivated by admin",
+                admin_user_id=admin_user_id,
+            )
+            diff["cancelled_occurrences"] = cancelled_occurrences
+
+    await add_audit_log(
+        db,
+        admin_user_id=admin_user_id,
+        action="UPDATE_VENUE",
+        entity_type="VENUE",
+        entity_id=str(venue.id),
+        diff=diff,
+    )
+    await admin_repository.commit(db)
+    await admin_repository.refresh(db, venue)
+
+    return {
+        "message": "Venue updated successfully",
+        "venue": {
+            "id": venue.id,
+            "name": venue.name,
+            "city_id": venue.city_id,
+            "address": venue.address,
+            "venue_type": venue.venue_type.value,
+            "latitude": venue.latitude,
+            "longitude": venue.longitude,
+            "is_active": venue.is_active,
+        },
+    }
+
+
+async def soft_delete_admin_venue_entry(
+    db: AsyncSession,
+    *,
+    venue_id: UUID,
+    admin_user_id: UUID,
+) -> dict[str, Any]:
+    venue = await admin_repository.get_venue(db, venue_id)
+    if not venue:
+        raise_api_error(404, "NOT_FOUND", "Venue not found")
+
+    cancelled_occurrences = 0
+    if venue.is_active:
+        venue.is_active = False
+        occurrence_rows = await admin_repository.list_scheduled_occurrences_for_venue(
+            db, venue.id
+        )
+        cancelled_occurrences = await cancel_future_scheduled_occurrences(
+            db,
+            occurrence_rows=occurrence_rows,
+            reason="Occurrence cancelled because venue was soft-deleted by admin",
+            admin_user_id=admin_user_id,
+        )
+
+    await add_audit_log(
+        db,
+        admin_user_id=admin_user_id,
+        action="SOFT_DELETE_VENUE",
+        entity_type="VENUE",
+        entity_id=str(venue.id),
+        diff={
+            "is_active": venue.is_active,
+            "cancelled_occurrences": cancelled_occurrences,
+        },
+    )
+    await admin_repository.commit(db)
+    await admin_repository.refresh(db, venue)
+
+    return {
+        "message": "Venue soft-deleted successfully",
         "venue": {
             "id": venue.id,
             "name": venue.name,

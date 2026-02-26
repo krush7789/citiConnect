@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import PaginatedCitySelect from "@/components/common/PaginatedCitySelect";
 import { ReadOnlyField } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -59,22 +60,18 @@ const AdminListingForm = ({
                         </div>
                         <div>
                             <p className="text-xs text-muted-foreground mb-1">City (optional)</p>
-                            <Select
+                            <PaginatedCitySelect
                                 name="city_id"
+                                cities={cities}
                                 value={listingFormik.values.city_id}
-                                onChange={(event) => {
-                                    listingFormik.setFieldValue("city_id", event.target.value);
+                                onChange={(nextValue) => {
+                                    listingFormik.setFieldValue("city_id", nextValue);
                                     listingFormik.setFieldValue("venue_id", "");
                                 }}
                                 onBlur={listingFormik.handleBlur}
-                            >
-                                <option value="">Nationwide / All India</option>
-                                {cities.map((city) => (
-                                    <option key={city.id} value={city.id}>
-                                        {city.name}
-                                    </option>
-                                ))}
-                            </Select>
+                                emptyOptionLabel="Nationwide / All India"
+                                searchPlaceholder="Search city"
+                            />
                         </div>
                         <div>
                             <p className="text-xs text-muted-foreground mb-1">Venue (optional)</p>

@@ -23,7 +23,6 @@ async def fetch_dashboard_payload(
     *,
     start_of_day: datetime,
     next_day: datetime,
-    week_ago: datetime,
 ) -> dict[str, object]:
     total_listings = int(
         (await db.execute(select(func.count(Listing.id)))).scalar_one() or 0
@@ -39,7 +38,14 @@ async def fetch_dashboard_payload(
         or 0
     )
     total_bookings = int(
-        (await db.execute(select(func.count(Booking.id)))).scalar_one() or 0
+        (
+            await db.execute(
+                select(func.count(Booking.id)).where(
+                    Booking.status == BookingStatus.CONFIRMED
+                )
+            )
+        ).scalar_one()
+        or 0
     )
     bookings_today = int(
         (
@@ -47,14 +53,6 @@ async def fetch_dashboard_payload(
                 select(func.count(Booking.id)).where(
                     Booking.created_at >= start_of_day, Booking.created_at < next_day
                 )
-            )
-        ).scalar_one()
-        or 0
-    )
-    bookings_this_week = int(
-        (
-            await db.execute(
-                select(func.count(Booking.id)).where(Booking.created_at >= week_ago)
             )
         ).scalar_one()
         or 0
@@ -107,39 +105,15 @@ async def fetch_dashboard_payload(
         )
     ).all()
 
-    category_group_expr = func.coalesce(
-        func.nullif(func.trim(Listing.category), ""), "Uncategorized"
-    )
-    category_rows = (
-        await db.execute(
-            select(
-                category_group_expr.label("category"),
-                func.count(Booking.id).label("total_bookings"),
-                func.coalesce(func.sum(Booking.final_price), 0).label("total_sales"),
-            )
-            .join(Occurrence, Occurrence.listing_id == Listing.id)
-            .join(Booking, Booking.occurrence_id == Occurrence.id)
-            .where(Booking.status == BookingStatus.CONFIRMED)
-            .group_by(category_group_expr)
-            .order_by(
-                func.coalesce(func.sum(Booking.final_price), 0).desc(),
-                category_group_expr.asc(),
-            )
-            .limit(8)
-        )
-    ).all()
-
     return {
         "total_listings": total_listings,
         "active_listings": active_listings,
         "total_bookings": total_bookings,
         "bookings_today": bookings_today,
-        "bookings_this_week": bookings_this_week,
         "active_users": active_users,
         "total_revenue": total_revenue,
         "recent_rows": recent_rows,
         "top_rows": top_rows,
-        "category_rows": category_rows,
     }
 
 
@@ -881,6 +855,8 @@ async def fetch_dashboard_drill_new_users(
     *,
     start_utc: datetime,
     end_utc: datetime,
+    query_text: str | None,
+    user_uuid: UUID | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -895,6 +871,16 @@ async def fetch_dashboard_drill_new_users(
     sort_column = sort_map[sort_by]
     order_expr = asc(sort_column) if sort_dir == "asc" else desc(sort_column)
     conditions = [User.created_at >= start_utc, User.created_at < end_utc]
+    if query_text:
+        like_query = f"%{query_text}%"
+        search_predicates = [
+            User.name.ilike(like_query),
+            User.email.ilike(like_query),
+            cast(User.id, String).ilike(like_query),
+        ]
+        if user_uuid is not None:
+            search_predicates.append(User.id == user_uuid)
+        conditions.append(or_(*search_predicates))
 
     total = int(
         (
@@ -1027,6 +1013,41 @@ async def get_occurrence(db: AsyncSession, occurrence_id: UUID) -> Occurrence | 
     return await db.get(Occurrence, occurrence_id)
 
 
+async def find_conflicting_occurrence(
+    db: AsyncSession,
+    *,
+    venue_id: UUID,
+    start_time: datetime,
+    end_time: datetime | None,
+    provider_sub_location: str | None,
+    exclude_occurrence_id: UUID | None = None,
+) -> Occurrence | None:
+    conflict_sub_location = (provider_sub_location or "").strip().lower()
+    reference_end = end_time or start_time
+    existing_reference_end = func.coalesce(Occurrence.end_time, Occurrence.start_time)
+
+    stmt = (
+        select(Occurrence)
+        .where(
+            Occurrence.venue_id == venue_id,
+            Occurrence.status.notin_(
+                [OccurrenceStatus.CANCELLED, OccurrenceStatus.ARCHIVED]
+            ),
+            func.coalesce(func.lower(func.trim(Occurrence.provider_sub_location)), "")
+            == conflict_sub_location,
+            Occurrence.start_time <= reference_end,
+            existing_reference_end >= start_time,
+        )
+        .order_by(Occurrence.start_time.asc())
+        .limit(1)
+    )
+
+    if exclude_occurrence_id is not None:
+        stmt = stmt.where(Occurrence.id != exclude_occurrence_id)
+
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
 async def get_offer(db: AsyncSession, offer_id: UUID) -> Offer | None:
     return await db.get(Offer, offer_id)
 
@@ -1079,6 +1100,40 @@ async def list_scheduled_occurrences_for_listing(
             await db.execute(
                 select(Occurrence).where(
                     Occurrence.listing_id == listing_id,
+                    Occurrence.status == OccurrenceStatus.SCHEDULED,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def list_scheduled_occurrences_for_city(
+    db: AsyncSession, city_id: UUID
+) -> list[Occurrence]:
+    return (
+        (
+            await db.execute(
+                select(Occurrence).where(
+                    Occurrence.city_id == city_id,
+                    Occurrence.status == OccurrenceStatus.SCHEDULED,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def list_scheduled_occurrences_for_venue(
+    db: AsyncSession, venue_id: UUID
+) -> list[Occurrence]:
+    return (
+        (
+            await db.execute(
+                select(Occurrence).where(
+                    Occurrence.venue_id == venue_id,
                     Occurrence.status == OccurrenceStatus.SCHEDULED,
                 )
             )
@@ -1156,10 +1211,12 @@ async def list_admin_bookings(
     db: AsyncSession,
     *,
     status_enum,
+    listing_type_enum,
     from_dt: datetime | None,
     to_dt: datetime | None,
     listing_query_text: str | None,
     user_query_text: str | None,
+    user_or_booking_uuid: UUID | None,
     page: int,
     page_size: int,
 ) -> tuple[list[tuple], int]:
@@ -1191,6 +1248,9 @@ async def list_admin_bookings(
     if status_enum:
         stmt = stmt.where(Booking.status == status_enum)
         count_stmt = count_stmt.where(Booking.status == status_enum)
+    if listing_type_enum:
+        stmt = stmt.where(Listing.type == listing_type_enum)
+        count_stmt = count_stmt.where(Listing.type == listing_type_enum)
     if from_dt:
         stmt = stmt.where(Booking.created_at >= from_dt)
         count_stmt = count_stmt.where(Booking.created_at >= from_dt)
@@ -1203,7 +1263,11 @@ async def list_admin_bookings(
         count_stmt = count_stmt.where(Listing.title.ilike(query))
     if user_query_text:
         query = f"%{user_query_text}%"
-        predicate = or_(User.name.ilike(query), User.email.ilike(query))
+        search_predicates = [User.name.ilike(query), User.email.ilike(query)]
+        if user_or_booking_uuid is not None:
+            search_predicates.append(User.id == user_or_booking_uuid)
+            search_predicates.append(Booking.id == user_or_booking_uuid)
+        predicate = or_(*search_predicates)
         stmt = stmt.where(predicate)
         count_stmt = count_stmt.where(predicate)
 
@@ -1233,8 +1297,9 @@ async def list_admin_offers(
         count_stmt = count_stmt.where(Offer.is_active == is_active)
     if code_query_text:
         query = f"%{code_query_text}%"
-        stmt = stmt.where(Offer.code.ilike(query))
-        count_stmt = count_stmt.where(Offer.code.ilike(query))
+        predicate = or_(Offer.code.ilike(query), Offer.title.ilike(query))
+        stmt = stmt.where(predicate)
+        count_stmt = count_stmt.where(predicate)
 
     stmt = stmt.order_by(Offer.valid_until.desc().nulls_last(), Offer.created_at.desc())
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)

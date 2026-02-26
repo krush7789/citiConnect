@@ -3,6 +3,14 @@ import { toApiDateTimeMs } from "@/lib/format";
 
 const fallbackDate = () => new Date().toISOString();
 const isObject = (value) => value && typeof value === "object" && !Array.isArray(value);
+const toTitleCaseWords = (value) => {
+  const compact = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!compact) return "";
+  return compact
+    .split(" ")
+    .map((token) => (token ? `${token.slice(0, 1).toUpperCase()}${token.slice(1).toLowerCase()}` : ""))
+    .join(" ");
+};
 
 const toCityName = (value) => {
   if (typeof value === "string") return value;
@@ -50,8 +58,8 @@ export const normalizeUser = (value = {}) => ({
 
 export const normalizeCity = (value = {}) => ({
   id: value.id || "city-gurugram",
-  name: value.name || "Gurugram",
-  state: value.state || "Haryana",
+  name: toTitleCaseWords(value.name) || "Gurugram",
+  state: toTitleCaseWords(value.state) || "Haryana",
   image_url: value.image_url || "",
   is_active: value.is_active !== false,
 });
@@ -67,7 +75,7 @@ export const normalizeListingCard = (value = {}) => {
     type: value.type || LISTING_TYPE.EVENT,
     title: value.title || "Untitled Listing",
     description: value.description || "",
-    city: toCityName(value.city) || value.city_name || "Gurugram",
+    city: toTitleCaseWords(toCityName(value.city) || value.city_name) || "Gurugram",
     city_id: value.city_id || toCityId(value.city) || "",
     address: toAddress(value),
     cover_image_url: coverImageUrl,

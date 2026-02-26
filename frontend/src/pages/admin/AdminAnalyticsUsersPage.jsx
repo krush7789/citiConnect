@@ -13,6 +13,7 @@ import {
 } from "@/components/admin/AdminPagePrimitives";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { formatDateTime } from "@/lib/format";
 import { SimpleBarChart, SimpleLineChart } from "@/components/admin/AdminSimpleCharts";
@@ -39,6 +40,8 @@ const AdminAnalyticsUsersPage = () => {
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState("created_at");
   const [sortDir, setSortDir] = useState("desc");
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [trendChartMode, setTrendChartMode] = useState("line");
 
   const isCustomRangeIncomplete = !areCustomDatesComplete(filters);
@@ -74,6 +77,7 @@ const AdminAnalyticsUsersPage = () => {
       page,
       sortBy,
       sortDir,
+      searchQuery,
     ],
     queryFn: () =>
       adminService.getDashboardDrill({
@@ -83,9 +87,22 @@ const AdminAnalyticsUsersPage = () => {
         page_size: PAGE_SIZE,
         sort_by: sortBy,
         sort_dir: sortDir,
+        q: searchQuery || undefined,
       }),
     enabled: !isCustomRangeIncomplete,
   });
+
+  const onApplySearch = (event) => {
+    event.preventDefault();
+    setPage(1);
+    setSearchQuery(searchDraft.trim());
+  };
+
+  const onClearSearch = () => {
+    setSearchDraft("");
+    setSearchQuery("");
+    setPage(1);
+  };
 
   const onFilterChange = (key, rawValue) => {
     setPage(1);
@@ -211,6 +228,24 @@ const AdminAnalyticsUsersPage = () => {
               </Select>
             </div>
           </div>
+          <form onSubmit={onApplySearch} className="mt-3 flex flex-col md:flex-row md:items-end gap-2">
+            <div className="flex-1">
+              <p className="text-xs text-muted-foreground mb-1">Search users</p>
+              <Input
+                value={searchDraft}
+                onChange={(event) => setSearchDraft(event.target.value)}
+                placeholder="Search by username, email, or user ID"
+              />
+            </div>
+            <Button type="submit" className="md:min-w-28">
+              Search
+            </Button>
+            {searchQuery ? (
+              <Button type="button" variant="outline" onClick={onClearSearch}>
+                Clear
+              </Button>
+            ) : null}
+          </form>
         </CardContent>
       </Card>
 

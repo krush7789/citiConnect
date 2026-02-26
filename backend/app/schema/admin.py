@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -52,6 +52,13 @@ class CityCreateRequest(BaseModel):
     is_active: bool = True
 
 
+class CityUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    state: str | None = Field(default=None, max_length=120)
+    image_url: str | None = Field(default=None, max_length=512)
+    is_active: bool | None = None
+
+
 class VenueCreateRequest(BaseModel):
     name: str = Field(min_length=2, max_length=180)
     city_id: UUID
@@ -60,6 +67,16 @@ class VenueCreateRequest(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     is_active: bool = True
+
+
+class VenueUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=180)
+    city_id: UUID | None = None
+    address: str | None = Field(default=None, max_length=400)
+    venue_type: VenueType | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    is_active: bool | None = None
 
 
 class ListingCreateRequest(BaseModel):
@@ -133,7 +150,6 @@ class AdminDashboardStats(BaseModel):
     active_listings: int
     total_bookings: int
     bookings_today: int
-    bookings_this_week: int
     active_users: int
     total_revenue: float
 
@@ -152,21 +168,6 @@ class AdminDashboardTopListing(BaseModel):
     id: UUID
     title: str
     total_bookings: int
-
-
-class AdminDashboardCategorySales(BaseModel):
-    category: str
-    total_bookings: int
-    total_sales: float
-
-
-class AdminDashboardAnalyticsKpis(BaseModel):
-    new_users: int
-    user_growth_rate_pct: float | None = None
-    revenue_period: float
-    revenue_growth_rate_pct: float | None = None
-    arpu: float | None = None
-    event_attendance_total: int
 
 
 class AdminDashboardAnalyticsSeriesRow(BaseModel):
@@ -188,43 +189,8 @@ class AdminDashboardRevenueSourceItem(BaseModel):
     transacting_users: int
 
 
-class AdminDashboardUsageByRegionItem(BaseModel):
-    city_id: UUID | None = None
-    city_name: str
-    bookings: int
-    transacting_users: int
-    revenue: float
-
-
-class AdminDashboardEventAttendanceItem(BaseModel):
-    occurrence_id: UUID | None = None
-    listing_id: UUID | None = None
-    listing_title: str
-    city_name: str
-    occurrence_start: datetime | None = None
-    attendance: int
-    revenue: float
-    confirmed_bookings: int
-
-
 class AdminDashboardAnalyticsBreakdowns(BaseModel):
     revenue_sources: list[AdminDashboardRevenueSourceItem] = Field(default_factory=list)
-    usage_by_region: list[AdminDashboardUsageByRegionItem] = Field(default_factory=list)
-    event_attendance_top: list[AdminDashboardEventAttendanceItem] = Field(
-        default_factory=list
-    )
-
-
-class AdminDashboardFiltersApplied(BaseModel):
-    preset: str
-    date_from: date
-    date_to: date
-    city_id: UUID | None = None
-    listing_type: ListingType | None = None
-    interval: str
-    source_dimension: str
-    top_n: int
-    timezone: str
 
 
 class AdminDashboardDrillResponse(BaseModel):
@@ -241,11 +207,8 @@ class AdminDashboardResponse(BaseModel):
     stats: AdminDashboardStats
     recent_bookings: list[AdminDashboardRecentBooking]
     top_listings: list[AdminDashboardTopListing]
-    category_sales: list[AdminDashboardCategorySales]
-    analytics_kpis: AdminDashboardAnalyticsKpis | None = None
     analytics_series: list[AdminDashboardAnalyticsSeriesRow] = Field(default_factory=list)
     analytics_breakdowns: AdminDashboardAnalyticsBreakdowns | None = None
-    filters_applied: AdminDashboardFiltersApplied | None = None
 
 
 class AdminListingListItem(BaseModel):
@@ -417,6 +380,19 @@ class AdminVenueItem(BaseModel):
     is_active: bool
 
 
+class AdminCityItem(BaseModel):
+    id: UUID
+    name: str
+    state: str | None = None
+    image_url: str | None = None
+    is_active: bool
+
+
 class AdminVenueCreateResponse(BaseModel):
     message: str
     venue: AdminVenueItem
+
+
+class AdminCityMutationResponse(BaseModel):
+    message: str
+    city: AdminCityItem

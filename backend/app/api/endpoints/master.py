@@ -40,7 +40,7 @@ async def get_venues(
     q: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
     return await get_venues_page(

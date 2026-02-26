@@ -23,7 +23,7 @@ export const ANALYTICS_SOURCE_DIMENSION_OPTIONS = [
 ];
 
 export const ANALYTICS_LISTING_TYPE_OPTIONS = [
-  { value: "", label: "All listing types" },
+  { value: "", label: "All" },
   { value: LISTING_TYPE.EVENT, label: "Event" },
   { value: LISTING_TYPE.MOVIE, label: "Movie" },
   { value: LISTING_TYPE.RESTAURANT, label: "Restaurant" },

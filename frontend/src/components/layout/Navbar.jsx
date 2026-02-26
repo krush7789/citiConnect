@@ -5,9 +5,9 @@ import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
 import SearchModal from "@/components/common/SearchModal";
 import ProfileDrawer from "@/components/layout/ProfileDrawer";
+import CityPickerDialog from "@/components/layout/CityPickerDialog";
 import { cityService } from "@/api/services";
 import { getSelectedCityId, setSelectedCityId } from "@/lib/city";
 import { useAuth } from "@/context/AuthContext";
@@ -42,6 +42,7 @@ const Navbar = () => {
 
   const [cities, setCities] = useState([]);
   const [selectedCityId, setSelectedCity] = useState(getSelectedCityId());
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const isAdmin = user?.role === USER_ROLE.ADMIN;
@@ -76,8 +77,7 @@ const Navbar = () => {
 
   const selectedCity = useMemo(() => cities.find((city) => city.id === selectedCityId), [cities, selectedCityId]);
 
-  const handleCityChange = (event) => {
-    const nextCityId = event.target.value;
+  const handleCityChange = (nextCityId) => {
     setSelectedCity(nextCityId);
     setSelectedCityId(nextCityId);
   };
@@ -93,24 +93,25 @@ const Navbar = () => {
 
             <div className="hidden md:flex items-center gap-2">
               <MapPin className="h-4 w-4 text-primary" />
-              <Select
-                value={selectedCityId}
-                onChange={handleCityChange}
+              <Button
+                type="button"
                 size="sm"
-                tone="subtle"
-                wrapperClassName="w-[170px]"
-                className="rounded-full bg-card/95 font-semibold"
+                variant="outline"
+                className="h-9 min-w-[170px] max-w-[220px] justify-start rounded-full bg-card/95 font-semibold"
+                onClick={() => setCityPickerOpen(true)}
               >
-                {cities.length ? (
-                  cities.map((city) => (
-                    <option key={city.id} value={city.id}>
-                      {city.name}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">No cities available</option>
-                )}
-              </Select>
+                <span className="truncate">
+                  {selectedCity?.name || "Select city"}
+                </span>
+              </Button>
+              <Dialog open={cityPickerOpen} onOpenChange={setCityPickerOpen}>
+                <CityPickerDialog
+                  cities={cities}
+                  selectedCityId={selectedCityId}
+                  onSelectCity={handleCityChange}
+                  onRequestClose={() => setCityPickerOpen(false)}
+                />
+              </Dialog>
             </div>
           </div>
 

@@ -24,6 +24,11 @@ const MovieCard = ({ listing, compact = false, onToggleWishlist }) => {
               aria-label={`${listing.title} placeholder image`}
             />
           )}
+          {listing.offer_text ? (
+            <span className="absolute left-2 right-2 bottom-11 bg-black/70 text-white text-[11px] px-2 py-1 rounded-md line-clamp-1">
+              {listing.offer_text}
+            </span>
+          ) : null}
           <div className="absolute inset-x-0 bottom-0 p-2.5 bg-gradient-to-t from-black/75 to-transparent">
             <div className="flex items-center justify-between text-white">
               <span className="inline-flex items-center gap-1 text-xs font-semibold">

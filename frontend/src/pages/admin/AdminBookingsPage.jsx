@@ -11,26 +11,27 @@ import AdminDataTable from "@/components/admin/AdminDataTable";
 import { AdminEmptyState, AdminInlineState, AdminPageHeader } from "@/components/admin/AdminPagePrimitives";
 
 const bookingStatuses = ["", ...Object.values(BOOKING_STATUS)];
+const listingTypeOptions = ["", "EVENT", "MOVIE", "RESTAURANT", "ACTIVITY"];
 const BOOKINGS_PAGE_SIZE = 25;
 
 const AdminBookingsPage = () => {
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({
     status: "",
+    listing_type: "",
     date_from: "",
     date_to: "",
-    listing: "",
     user: "",
   });
 
   const bookingsQuery = useQuery({
-    queryKey: ["admin-bookings", page, filters.status, filters.date_from, filters.date_to, filters.listing, filters.user],
+    queryKey: ["admin-bookings", page, filters.status, filters.listing_type, filters.date_from, filters.date_to, filters.user],
     queryFn: () =>
       adminService.getBookings({
         status: filters.status || undefined,
+        listing_type: filters.listing_type || undefined,
         date_from: filters.date_from || undefined,
         date_to: filters.date_to || undefined,
-        listing: filters.listing || undefined,
         user: filters.user || undefined,
         page,
         page_size: BOOKINGS_PAGE_SIZE,
@@ -130,6 +131,22 @@ const AdminBookingsPage = () => {
               </Select>
             </div>
             <div>
+              <p className="text-xs text-muted-foreground mb-1">Listing</p>
+              <Select
+                value={filters.listing_type}
+                onChange={(event) => {
+                  setPage(1);
+                  setFilters((prev) => ({ ...prev, listing_type: event.target.value }));
+                }}
+              >
+                {listingTypeOptions.map((type) => (
+                  <option key={type || "all"} value={type}>
+                    {type || "All"}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
               <p className="text-xs text-muted-foreground mb-1">Date from</p>
               <Input
                 type="date"
@@ -152,17 +169,6 @@ const AdminBookingsPage = () => {
               />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-1">Listing</p>
-              <Input
-                value={filters.listing}
-                onChange={(event) => {
-                  setPage(1);
-                  setFilters((prev) => ({ ...prev, listing: event.target.value }));
-                }}
-                placeholder="Search listing"
-              />
-            </div>
-            <div>
               <p className="text-xs text-muted-foreground mb-1">User</p>
               <Input
                 value={filters.user}
@@ -170,7 +176,7 @@ const AdminBookingsPage = () => {
                   setPage(1);
                   setFilters((prev) => ({ ...prev, user: event.target.value }));
                 }}
-                placeholder="Name or email"
+                placeholder="Name, email, or ID"
               />
             </div>
           </div>

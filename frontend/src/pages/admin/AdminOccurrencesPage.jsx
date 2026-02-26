@@ -12,6 +12,7 @@ import { Select } from "@/components/ui/select";
 import { ReadOnlyField } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import PaginationControls from "@/components/common/PaginationControls";
+import PaginatedCitySelect from "@/components/common/PaginatedCitySelect";
 import AdminDataTable from "@/components/admin/AdminDataTable";
 import { AdminEmptyState, AdminInlineState, AdminPageHeader } from "@/components/admin/AdminPagePrimitives";
 
@@ -71,6 +72,13 @@ const toDateTimeInputValue = (value) => {
   return localTime.toISOString().slice(0, 16);
 };
 
+const pad2 = (value) => String(value).padStart(2, "0");
+
+const toLocalDateTimeInputValue = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+};
+
 const AdminOccurrencesPage = () => {
   const navigate = useNavigate();
   const { listingId } = useParams();
@@ -88,6 +96,9 @@ const AdminOccurrencesPage = () => {
   const [editingOccurrenceId, setEditingOccurrenceId] = useState("");
   const [filters, setFilters] = useState({ status: "", q: "" });
   const [searchDraft, setSearchDraft] = useState("");
+  const [minDateTimeLocal, setMinDateTimeLocal] = useState(() =>
+    toLocalDateTimeInputValue(new Date())
+  );
   const isAllCitiesListing = Boolean(listing?.is_nationwide || !listing?.city_id);
   const occurrenceFormik = useFormik({
     initialValues: initialForm,
@@ -111,14 +122,29 @@ const AdminOccurrencesPage = () => {
         return;
       }
 
+      const startDate = new Date(values.start_time);
+      if (Number.isNaN(startDate.getTime())) {
+        setError("Start time is invalid.");
+        return;
+      }
+      if (!editingOccurrenceId && startDate.getTime() < Date.now()) {
+        setError("Start time cannot be in the past.");
+        return;
+      }
+      const endDate = values.end_time ? new Date(values.end_time) : null;
+      if (endDate && Number.isNaN(endDate.getTime())) {
+        setError("End time is invalid.");
+        return;
+      }
+
       const parsedPrice = Number(values.price || 0);
       const fallbackTicketPricing =
         ticketPricing && Object.keys(ticketPricing).length
           ? ticketPricing
           : { STANDARD: Number.isFinite(parsedPrice) ? parsedPrice : 0 };
       const occurrencePayload = {
-        start_time: new Date(values.start_time).toISOString(),
-        end_time: values.end_time ? new Date(values.end_time).toISOString() : null,
+        start_time: startDate.toISOString(),
+        end_time: endDate ? endDate.toISOString() : null,
         venue_id: values.venue_id,
         provider_sub_location: values.provider_sub_location,
         capacity_total: capacityTotal,
@@ -158,6 +184,13 @@ const AdminOccurrencesPage = () => {
     venueIdRef.current = occurrenceFormik.values.venue_id;
     setOccurrenceFieldValueRef.current = occurrenceFormik.setFieldValue;
   }, [occurrenceFormik.values.venue_id, occurrenceFormik.setFieldValue]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setMinDateTimeLocal(toLocalDateTimeInputValue(new Date()));
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!listingId) return;
@@ -420,6 +453,7 @@ const AdminOccurrencesPage = () => {
               <Input
                 name="start_time"
                 type="datetime-local"
+                min={editingOccurrenceId ? undefined : minDateTimeLocal}
                 value={occurrenceFormik.values.start_time}
                 onChange={occurrenceFormik.handleChange}
                 onBlur={occurrenceFormik.handleBlur}
@@ -433,6 +467,10 @@ const AdminOccurrencesPage = () => {
               <Input
                 name="end_time"
                 type="datetime-local"
+                min={
+                  occurrenceFormik.values.start_time ||
+                  (editingOccurrenceId ? undefined : minDateTimeLocal)
+                }
                 value={occurrenceFormik.values.end_time}
                 onChange={occurrenceFormik.handleChange}
                 onBlur={occurrenceFormik.handleBlur}
@@ -441,21 +479,17 @@ const AdminOccurrencesPage = () => {
             {isAllCitiesListing ? (
               <div>
                 <p className="text-xs text-muted-foreground mb-1">City <span className="text-destructive">*</span></p>
-                <Select
+                <PaginatedCitySelect
+                  cities={cities}
                   value={occurrenceCityId}
-                  onChange={(event) => {
-                    setOccurrenceCityId(event.target.value);
+                  onChange={(nextValue) => {
+                    setOccurrenceCityId(nextValue);
                     occurrenceFormik.setFieldValue("venue_id", "");
                   }}
                   required
-                >
-                  <option value="">Select city</option>
-                  {cities.map((city) => (
-                    <option key={city.id} value={city.id}>
-                      {city.name}
-                    </option>
-                  ))}
-                </Select>
+                  includeEmptyOption={false}
+                  searchPlaceholder="Search city"
+                />
               </div>
             ) : (
               <div>

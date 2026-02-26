@@ -54,7 +54,48 @@ export const authService = {
 };
 
 export const cityService = {
-  getCities: () => paginatedCall(() => api.get("/cities", { params: { is_active: true } }), normalizeCity),
+  getCities: async (params = {}) => {
+    const hasExplicitPaging =
+      Object.prototype.hasOwnProperty.call(params, "page")
+      || Object.prototype.hasOwnProperty.call(params, "page_size");
+    const baseParams = { is_active: true, ...params };
+
+    if (hasExplicitPaging) {
+      return paginatedCall(() => api.get("/cities", { params: baseParams }), normalizeCity);
+    }
+
+    try {
+      const pageSize = 100;
+      const aggregatedItems = [];
+      let page = 1;
+      let totalPages = 1;
+
+      while (page <= totalPages) {
+        const response = await api.get("/cities", {
+          params: {
+            ...baseParams,
+            page,
+            page_size: pageSize,
+          },
+        });
+        const normalizedPage = normalizePaginated(response?.data, normalizeCity);
+        aggregatedItems.push(...(normalizedPage.items || []));
+        totalPages = Math.max(1, Number(normalizedPage.total_pages || 1));
+        page += 1;
+      }
+
+      return {
+        items: aggregatedItems,
+        page: 1,
+        page_size: aggregatedItems.length || pageSize,
+        total: aggregatedItems.length,
+        total_pages: 1,
+      };
+    } catch (error) {
+      throw normalizeServiceError(error);
+    }
+  },
+  getCitiesAdmin: (params = {}) => paginatedCall(() => api.get("/cities", { params }), normalizeCity),
   getVenues: (params = {}) => paginatedCall(() => api.get("/venues", { params }), (item) => item),
   geocodeAddress: (query) => {
     const trimmed = String(query || "").trim();
@@ -62,7 +103,10 @@ export const cityService = {
     return handleApiCall(() => api.get("/geocode", { params: { q: trimmed } }));
   },
   createCity: (payload) => handleApiCall(() => api.post("/admin/cities", payload)),
+  updateCity: (cityId, payload) => handleApiCall(() => api.patch(`/admin/cities/${cityId}`, payload)),
   createVenue: (payload) => handleApiCall(() => api.post("/admin/venues", payload)),
+  updateVenue: (venueId, payload) => handleApiCall(() => api.patch(`/admin/venues/${venueId}`, payload)),
+  softDeleteVenue: (venueId) => handleApiCall(() => api.delete(`/admin/venues/${venueId}`)),
 };
 
 export const listingService = {
@@ -177,4 +221,3 @@ export const adminService = {
 export const searchService = {
   search: (params = {}) => listingService.getListings(params),
 };
-

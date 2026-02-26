@@ -9,9 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { ReadOnlyField } from "@/components/ui/field";
-import { Textarea } from "@/components/ui/textarea";
 import PaginationControls from "@/components/common/PaginationControls";
+import PaginatedCitySelect from "@/components/common/PaginatedCitySelect";
 import AdminDataTable from "@/components/admin/AdminDataTable";
 import { AdminEmptyState, AdminInlineState, AdminPageHeader } from "@/components/admin/AdminPagePrimitives";
 import AdminListingForm from "@/components/admin/AdminListingForm";
@@ -151,6 +150,7 @@ const AdminListingsPage = () => {
       const vibeTags = parseStringList(values.vibe_tags_text);
       const galleryImageUrls = parseStringList(values.gallery_urls_text);
       const coverImageUrl = trimmedOrUndefined(values.cover_image_url) || galleryImageUrls[0];
+      const normalizedOfferText = String(values.offer_text ?? "").trim();
 
       if (!title) {
         setError("Listing title is required.");
@@ -177,7 +177,7 @@ const AdminListingsPage = () => {
         currency: values.currency,
         status: values.status,
         is_featured: values.is_featured,
-        offer_text: trimmedOrUndefined(values.offer_text),
+        offer_text: normalizedOfferText || null,
         cover_image_url: coverImageUrl,
         gallery_image_urls: galleryImageUrls.length ? galleryImageUrls : undefined,
         metadata: metadata || {},
@@ -525,20 +525,16 @@ const AdminListingsPage = () => {
 
             <div>
               <p className="text-xs text-muted-foreground mb-1">City</p>
-              <Select
+              <PaginatedCitySelect
+                cities={cities}
                 value={filters.city}
-                onChange={(event) => {
+                onChange={(nextValue) => {
                   setPage(1);
-                  setFilters((prev) => ({ ...prev, city: event.target.value }));
+                  setFilters((prev) => ({ ...prev, city: nextValue }));
                 }}
-              >
-                <option value="">All</option>
-                {cities.map((city) => (
-                  <option key={city.id} value={city.id}>
-                    {city.name}
-                  </option>
-                ))}
-              </Select>
+                emptyOptionLabel="All"
+                searchPlaceholder="Search city"
+              />
             </div>
           </div>
           <form onSubmit={onApplySearch} className="mt-3 flex flex-col md:flex-row md:items-end gap-2">

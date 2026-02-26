@@ -36,6 +36,12 @@ const initialForm = {
   applicability_text: JSON.stringify(offerAvailabilityTemplate, null, 2),
 };
 const OFFERS_PAGE_SIZE = 20;
+const pad2 = (value) => String(value).padStart(2, "0");
+
+const toLocalDateTimeInputValue = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+};
 
 const parseOfferAvailability = (value) => {
   const raw = String(value || "").trim();
@@ -78,10 +84,23 @@ const validationSchema = Yup.object({
 const AdminOffersPage = () => {
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
+  const [filters, setFilters] = useState({ code: "", is_active: "" });
+  const [searchDraft, setSearchDraft] = useState("");
+  const [statusDraft, setStatusDraft] = useState("");
   const queryClient = useQueryClient();
+  const minDateTimeLocal = useMemo(() => toLocalDateTimeInputValue(new Date()), []);
   const offersQuery = useQuery({
-    queryKey: ["admin-offers", page],
-    queryFn: () => adminService.getOffers({ page, page_size: OFFERS_PAGE_SIZE }),
+    queryKey: ["admin-offers", page, filters.code, filters.is_active],
+    queryFn: () =>
+      adminService.getOffers({
+        page,
+        page_size: OFFERS_PAGE_SIZE,
+        code: filters.code || undefined,
+        is_active:
+          filters.is_active === ""
+            ? undefined
+            : filters.is_active === "ACTIVE",
+      }),
   });
 
   const createOfferMutation = useMutation({
@@ -118,6 +137,25 @@ const AdminOffersPage = () => {
         setError("Offer availability metadata must be a valid JSON object.");
         return;
       }
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const validFromDate = values.valid_from ? new Date(values.valid_from) : null;
+      const validUntilDate = values.valid_until ? new Date(values.valid_until) : null;
+
+      if (validFromDate && validFromDate < today) {
+        setError("Valid from cannot be in the past.");
+        return;
+      }
+      if (validUntilDate && validUntilDate < today) {
+        setError("Valid until cannot be in the past.");
+        return;
+      }
+      if (validFromDate && validUntilDate && validUntilDate < validFromDate) {
+        setError("Valid until must be later than or equal to valid from.");
+        return;
+      }
+
       try {
         await createOfferMutation.mutateAsync({
           code: values.code,
@@ -140,6 +178,25 @@ const AdminOffersPage = () => {
       }
     },
   });
+
+  const applyFilters = useCallback(
+    (event) => {
+      event.preventDefault();
+      setPage(1);
+      setFilters({
+        code: searchDraft.trim(),
+        is_active: statusDraft,
+      });
+    },
+    [searchDraft, statusDraft]
+  );
+
+  const resetFilters = useCallback(() => {
+    setPage(1);
+    setSearchDraft("");
+    setStatusDraft("");
+    setFilters({ code: "", is_active: "" });
+  }, []);
 
   const toggleOfferState = useCallback(async (offer) => {
     setError("");
@@ -202,7 +259,7 @@ const AdminOffersPage = () => {
     <div className="space-y-6">
       <AdminPageHeader
         title="Offers Management"
-        description="Create offers and toggle active/inactive states."
+        description="Search offers, create new offers, and toggle active/inactive states."
       />
 
       {offersQuery.error?.normalized?.message && !error ? (
@@ -210,6 +267,33 @@ const AdminOffersPage = () => {
       ) : null}
       {error ? <AdminInlineState tone="error">{error}</AdminInlineState> : null}
       {loading ? <AdminInlineState>Loading offers...</AdminInlineState> : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-xl">Search offers</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={applyFilters} className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto_auto] gap-3">
+            <Input
+              value={searchDraft}
+              onChange={(event) => setSearchDraft(event.target.value)}
+              placeholder="Search by code or title"
+            />
+            <Select
+              value={statusDraft}
+              onChange={(event) => setStatusDraft(event.target.value)}
+            >
+              <option value="">All</option>
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="INACTIVE">INACTIVE</option>
+            </Select>
+            <Button type="submit">Search</Button>
+            <Button type="button" variant="outline" onClick={resetFilters}>
+              Reset
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -294,6 +378,7 @@ const AdminOffersPage = () => {
                 <Input
                   name="valid_from"
                   type="datetime-local"
+                  min={minDateTimeLocal}
                   value={formik.values.valid_from}
                   onChange={formik.handleChange}
                   onBlur={formik.handleBlur}
@@ -304,6 +389,7 @@ const AdminOffersPage = () => {
                 <Input
                   name="valid_until"
                   type="datetime-local"
+                  min={formik.values.valid_from || minDateTimeLocal}
                   value={formik.values.valid_until}
                   onChange={formik.handleChange}
                   onBlur={formik.handleBlur}
@@ -387,7 +473,7 @@ const AdminOffersPage = () => {
         <CardHeader>
           <CardTitle className="text-xl">Offers</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {!loading && !items.length ? (
             <AdminEmptyState message="No offers found." />
           ) : null}

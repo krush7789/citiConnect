@@ -2,6 +2,7 @@ import React from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import PaginatedCitySelect from "@/components/common/PaginatedCitySelect";
 import {
   ANALYTICS_INTERVAL_OPTIONS,
   ANALYTICS_LISTING_TYPE_OPTIONS,
@@ -62,17 +63,13 @@ const AdminAnalyticsFilterBar = ({
           {includeCity ? (
             <div>
               <p className="text-xs text-muted-foreground mb-1">City</p>
-              <Select
+              <PaginatedCitySelect
+                cities={cities}
                 value={filters.city_id || ""}
-                onChange={(event) => onFilterChange("city_id", event.target.value)}
-              >
-                <option value="">All cities</option>
-                {cities.map((city) => (
-                  <option key={city.id} value={city.id}>
-                    {city.name}
-                  </option>
-                ))}
-              </Select>
+                onChange={(nextValue) => onFilterChange("city_id", nextValue)}
+                emptyOptionLabel="All cities"
+                searchPlaceholder="Search city"
+              />
             </div>
           ) : null}
 
