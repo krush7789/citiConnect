@@ -3,7 +3,11 @@ import axios from "axios";
 const TOKEN_STORAGE_KEY = "citiconnect_access_token";
 const USER_STORAGE_KEY = "citiconnect_user";
 
-const RAW_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+const rawEnv = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+const RAW_BASE =
+  !rawEnv || rawEnv.includes("citiconnect-backend-xyz") || rawEnv.includes("onrender.com") || rawEnv.includes("koyeb.app")
+    ? "/api/v1"
+    : rawEnv;
 const BASE_URL = RAW_BASE.endsWith("/") ? RAW_BASE.slice(0, -1) : RAW_BASE;
 
 const authFreePaths = ["/auth/login", "/auth/register", "/auth/forgot-password", "/auth/refresh"];
