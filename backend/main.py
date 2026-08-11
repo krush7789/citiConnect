@@ -38,11 +38,30 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 add_exception_handlers(app)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
+    allow_origins=["*"] if "*" in settings.cors_origin_list else settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def normalize_api_path(request, call_next):
+    raw_path = request.url.path
+    if raw_path.startswith("/api"):
+        if not raw_path.startswith("/api/v1") and raw_path != "/api":
+            request.scope["path"] = "/api/v1" + raw_path[4:]
+    elif raw_path.startswith("/v1"):
+        request.scope["path"] = "/api" + raw_path
+    elif (
+        raw_path != "/"
+        and not raw_path.startswith("/docs")
+        and not raw_path.startswith("/openapi.json")
+        and not raw_path.startswith("/health")
+    ):
+        request.scope["path"] = "/api/v1" + raw_path
+
+    return await call_next(request)
 
 
 @app.get("/")

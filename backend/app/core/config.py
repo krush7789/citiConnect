@@ -86,7 +86,7 @@ class Config:
         self.app_name = _env_str("APP_NAME", "CitiConnect Backend")
         self.cors_origins = _env_str(
             "CORS_ORIGINS",
-            "http://localhost:5173,http://127.0.0.1:5173",
+            "*",
         )
         self.enable_scheduler = _env_bool("ENABLE_SCHEDULER", True)
         self.refresh_cookie_secure = _env_bool("REFRESH_COOKIE_SECURE", False)
