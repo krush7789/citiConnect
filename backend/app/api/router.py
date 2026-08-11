@@ -12,12 +12,29 @@ from app.api.endpoints.wishlists import router as wishlists_router
 
 router = APIRouter(prefix="/api/v1")
 
-router.include_router(auth_router)
-router.include_router(master_router)
-router.include_router(listings_router)
-router.include_router(bookings_router)
-router.include_router(wishlists_router)
-router.include_router(users_router)
-router.include_router(notifications_router)
-router.include_router(media_router)
-router.include_router(admin_router)
+for r in [
+    auth_router,
+    master_router,
+    listings_router,
+    bookings_router,
+    wishlists_router,
+    users_router,
+    notifications_router,
+    media_router,
+    admin_router,
+]:
+    router.include_router(r)
+
+v1_router = APIRouter(prefix="/v1")
+for r in [
+    auth_router,
+    master_router,
+    listings_router,
+    bookings_router,
+    wishlists_router,
+    users_router,
+    notifications_router,
+    media_router,
+    admin_router,
+]:
+    v1_router.include_router(r)

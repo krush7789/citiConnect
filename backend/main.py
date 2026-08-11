@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 import uvicorn
 
-from app.api.router import router
+from app.api.router import router, v1_router
 from app.core.config import settings
 from app.core.database import create_tables
 from app.core.errors import add_exception_handlers
@@ -47,12 +47,15 @@ app.add_middleware(
 
 @app.get("/")
 @app.get("/api")
+@app.get("/health")
+@app.get("/v1/health")
 @app.get("/api/v1/health")
 async def health_check():
     return {"status": "ok", "app": settings.app_name}
 
 
 app.include_router(router)
+app.include_router(v1_router)
 add_pagination(app)
 
 if __name__ == "__main__":
