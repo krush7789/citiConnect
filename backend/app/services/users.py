@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import raise_api_error
@@ -8,14 +10,7 @@ from app.repository import users as users_repository
 from app.schema.user import UpdateMeRequest
 
 
-def normalize_optional_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-    cleaned = value.strip()
-    return cleaned or None
-
-
-async def serialize_user(db: AsyncSession, user: User) -> dict[str, Any]:
+async def serialize_user(user: User) -> dict[str, Any]:
     return {
         "id": user.id,
         "name": user.name,
@@ -28,7 +23,7 @@ async def serialize_user(db: AsyncSession, user: User) -> dict[str, Any]:
 
 
 async def get_me_profile(db: AsyncSession, current_user: User) -> dict[str, Any]:
-    return {"user": await serialize_user(db, current_user)}
+    return {"user": await serialize_user(current_user)}
 
 
 async def update_me_profile(
@@ -38,22 +33,14 @@ async def update_me_profile(
     current_user: User,
 ) -> dict[str, Any]:
     if payload.name is not None:
-        cleaned_name = payload.name.strip()
-        if not cleaned_name:
-            raise_api_error(
-                422,
-                "VALIDATION_ERROR",
-                "Some fields are invalid",
-                {"fields": {"name": "Name cannot be empty"}},
-            )
-        current_user.name = cleaned_name
+        current_user.name = payload.name
 
-    if payload.phone is not None:
-        cleaned_phone = normalize_optional_text(payload.phone)
-        if cleaned_phone:
+    if "phone" in payload.model_fields_set:
+        next_phone = payload.phone
+        if next_phone:
             duplicate = await users_repository.find_user_id_by_phone_excluding_user(
                 db,
-                phone=cleaned_phone,
+                phone=next_phone,
                 excluded_user_id=current_user.id,
             )
             if duplicate:
@@ -62,14 +49,12 @@ async def update_me_profile(
                     "DUPLICATE_PHONE",
                     "Phone number is already used by another account",
                 )
-        current_user.phone = cleaned_phone
+        current_user.phone = next_phone
 
-    if payload.profile_image_url is not None:
-        current_user.profile_image_url = normalize_optional_text(
-            payload.profile_image_url
-        )
+    if "profile_image_url" in payload.model_fields_set:
+        current_user.profile_image_url = payload.profile_image_url
 
     await users_repository.commit(db)
     await users_repository.refresh_user(db, current_user)
-    return {"user": await serialize_user(db, current_user)}
+    return {"user": await serialize_user(current_user)}
 

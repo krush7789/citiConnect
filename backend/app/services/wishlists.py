@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import raise_api_error
 from app.repository.listing import get_next_occurrences_for_listing_ids
-from app.repository.wishlists import (
+from app.repository.wishlist import (
     add_wishlist_item,
     is_published_listing,
     list_user_wishlist,

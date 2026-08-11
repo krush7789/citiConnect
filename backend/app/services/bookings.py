@@ -21,7 +21,7 @@ from app.models.enums import (
 )
 from app.models.seat_lock import SeatLock
 from app.models.user_offer_usage import UserOfferUsage
-from app.repository.bookings import (
+from app.repository.booking import (
     count_offer_usage,
     expire_stale_holds,
     expire_stale_seat_locks,
@@ -43,6 +43,7 @@ from app.repository.bookings import (
 )
 from app.schema.booking import (
     ApplyOfferRequest,
+    BookingScope,
     BookingLockRequest,
     CancelBookingRequest,
     ConfirmBookingRequest,
@@ -118,13 +119,11 @@ def _dt_gte(left: datetime | None, right: datetime | None) -> bool:
 def _hold_expiry(booking: Booking) -> datetime | None:
     hold_expires_at = normalize_datetime(booking.hold_expires_at)
     created_at = normalize_datetime(booking.created_at)
-    if created_at is None:
+    if hold_expires_at is not None:
         return hold_expires_at
-    if hold_expires_at is None:
-        return created_at + timedelta(minutes=HOLD_MINUTES)
-    if hold_expires_at < created_at:
-        return created_at + timedelta(minutes=HOLD_MINUTES)
-    return hold_expires_at
+    if created_at is None:
+        return None
+    return created_at + timedelta(minutes=HOLD_MINUTES)
 
 
 def _iso_utc(value: datetime | None) -> str | None:
@@ -138,12 +137,7 @@ def _normalize_seat_ids(raw: Any) -> list[str]:
     seen: set[str] = set()
     seats: list[str] = []
     for item in raw:
-        if isinstance(item, str):
-            seat_id = item.strip().upper()
-        elif isinstance(item, dict):
-            seat_id = str(item.get("id", "")).strip().upper()
-        else:
-            seat_id = ""
+        seat_id = item.strip().upper() if isinstance(item, str) else ""
         if not seat_id or seat_id in seen:
             continue
         seen.add(seat_id)
@@ -730,7 +724,7 @@ async def apply_offer_to_booking(
             },
         )
 
-    code = (payload.coupon_code or "").strip()
+    code = payload.coupon_code or ""
     if not code:
         booking.applied_offer_id = None
         booking.discount_amount = Decimal("0")
@@ -1065,7 +1059,7 @@ async def confirm_booking(
     if occurrence.capacity_remaining == 0:
         occurrence.status = OccurrenceStatus.SOLD_OUT
 
-    payment_method = (payload.payment_method or "RAZORPAY_DUMMY").strip().upper()
+    payment_method = payload.payment_method or "RAZORPAY_DUMMY"
     payment_payload = (
         payload.payment_payload if isinstance(payload.payment_payload, dict) else {}
     )
@@ -1218,21 +1212,13 @@ async def confirm_booking(
 
 
 async def get_bookings(
-    scope: str = "upcoming",
+    scope: BookingScope = "upcoming",
     page: int = 1,
     page_size: int = 20,
     *,
     current_user: Any,
     db: AsyncSession,
 ):
-    if scope not in {"upcoming", "past", "cancelled"}:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"scope": "Invalid scope"}},
-        )
-
     now = utcnow()
     await expire_stale_holds(db, now=now)
     await expire_stale_seat_locks(db, now=now)

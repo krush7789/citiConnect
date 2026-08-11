@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, LocateFixed, MapPinned } from "lucide-react";
 import { useFormik } from "formik";
 import * as Yup from "yup";
@@ -30,9 +30,7 @@ const initialVenueForm = {
 };
 
 const venueTypes = ["THEATER", "RESTAURANT", "EVENT_SPACE", "ACTIVITY_AREA"];
-const CITY_FETCH_PAGE_SIZE = 100;
-const VENUE_FETCH_PAGE_SIZE = 200;
-const CITY_TABLE_PAGE_SIZE = 8;
+const CITY_TABLE_PAGE_SIZE = 10;
 const VENUE_TABLE_PAGE_SIZE = 12;
 
 const cityValidationSchema = Yup.object({
@@ -50,29 +48,20 @@ const venueValidationSchema = Yup.object({
   longitude: Yup.number().nullable(),
 });
 
-const fetchAllPages = async (fetchPage) => {
-  const aggregatedItems = [];
-  let page = 1;
-  let totalPages = 1;
-
-  while (page <= totalPages) {
-    const response = await fetchPage(page);
-    aggregatedItems.push(...(response.items || []));
-    totalPages = Math.max(1, Number(response.total_pages) || 1);
-    page += 1;
-  }
-
-  return aggregatedItems;
-};
-
 const AdminLocationsPage = () => {
-  const [loading, setLoading] = useState(true);
+  const [loadingCities, setLoadingCities] = useState(true);
+  const [loadingVenues, setLoadingVenues] = useState(true);
   const [citySaving, setCitySaving] = useState(false);
   const [venueSaving, setVenueSaving] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [cities, setCities] = useState([]);
+  const [venueFormCityOptions, setVenueFormCityOptions] = useState([]);
+  const [venueFilterCityOptions, setVenueFilterCityOptions] = useState([]);
+  const [cityLookup, setCityLookup] = useState({});
+  const [venueFormCitySearch, setVenueFormCitySearch] = useState("");
+  const [venueFilterCitySearch, setVenueFilterCitySearch] = useState("");
   const [venues, setVenues] = useState([]);
   const [editingCityId, setEditingCityId] = useState("");
   const [editingVenueId, setEditingVenueId] = useState("");
@@ -82,75 +71,28 @@ const AdminLocationsPage = () => {
   const [venueCityFilter, setVenueCityFilter] = useState("");
   const [cityTablePage, setCityTablePage] = useState(1);
   const [venueTablePage, setVenueTablePage] = useState(1);
+  const [cityPageMeta, setCityPageMeta] = useState({ page: 1, total_pages: 1, total: 0 });
+  const [venuePageMeta, setVenuePageMeta] = useState({ page: 1, total_pages: 1, total: 0 });
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const loading = loadingCities || loadingVenues;
+
+  const mergeCityLookup = useCallback((nextItems = []) => {
+    setCityLookup((prev) => {
+      const next = { ...prev };
+      (nextItems || []).forEach((city) => {
+        if (city?.id) {
+          next[city.id] = city;
+        }
+      });
+      return next;
+    });
+  }, []);
 
   const cityMap = useMemo(
-    () => Object.fromEntries((cities || []).map((city) => [city.id, city])),
-    [cities]
+    () => cityLookup,
+    [cityLookup]
   );
-  const cityStates = useMemo(
-    () =>
-      [...new Set(
-        cities
-          .map((city) => String(city.state || "").trim())
-          .filter(Boolean)
-      )].sort((a, b) => a.localeCompare(b)),
-    [cities]
-  );
-  const filteredCities = useMemo(() => {
-    const query = String(citySearchQuery || "").trim().toLowerCase();
-    return cities.filter((city) => {
-      const matchesName = !query || String(city.name || "").toLowerCase().includes(query);
-      const matchesState = !cityStateFilter || city.state === cityStateFilter;
-      return matchesName && matchesState;
-    });
-  }, [cities, citySearchQuery, cityStateFilter]);
-  const filteredVenues = useMemo(() => {
-    const query = String(venueSearchQuery || "").trim().toLowerCase();
-    return venues.filter((venue) => {
-      const matchesName = !query
-        || String(venue.name || "").toLowerCase().includes(query);
-      const matchesCity = !venueCityFilter || venue.city_id === venueCityFilter;
-      return matchesName && matchesCity;
-    });
-  }, [venues, venueSearchQuery, venueCityFilter]);
-  const cityTotalPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredCities.length / CITY_TABLE_PAGE_SIZE)),
-    [filteredCities.length]
-  );
-  const venueTotalPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredVenues.length / VENUE_TABLE_PAGE_SIZE)),
-    [filteredVenues.length]
-  );
-  const pagedCities = useMemo(() => {
-    const offset = (cityTablePage - 1) * CITY_TABLE_PAGE_SIZE;
-    return filteredCities.slice(offset, offset + CITY_TABLE_PAGE_SIZE);
-  }, [filteredCities, cityTablePage]);
-  const pagedVenues = useMemo(() => {
-    const offset = (venueTablePage - 1) * VENUE_TABLE_PAGE_SIZE;
-    return filteredVenues.slice(offset, offset + VENUE_TABLE_PAGE_SIZE);
-  }, [filteredVenues, venueTablePage]);
-
-  const fetchLocationsData = async () => {
-    const [nextCities, nextVenues] = await Promise.all([
-      fetchAllPages((page) =>
-        cityService.getCitiesAdmin({ page, page_size: CITY_FETCH_PAGE_SIZE })
-      ),
-      fetchAllPages((page) =>
-        cityService.getVenues({ page, page_size: VENUE_FETCH_PAGE_SIZE })
-      ),
-    ]);
-
-    return { nextCities, nextVenues };
-  };
-
-  const loadLocations = async () => {
-    const { nextCities, nextVenues } = await fetchLocationsData();
-    setCities(nextCities);
-    setVenues(nextVenues);
-    if (!venueFormik.values.city_id && nextCities[0]?.id) {
-      venueFormik.setFieldValue("city_id", nextCities[0].id);
-    }
-  };
 
   const resetCityForm = () => {
     setEditingCityId("");
@@ -162,7 +104,7 @@ const AdminLocationsPage = () => {
     venueFormik.resetForm({
       values: {
         ...initialVenueForm,
-        city_id: cities[0]?.id || "",
+        city_id: venueFormCityOptions[0]?.id || "",
       },
     });
   };
@@ -189,7 +131,8 @@ const AdminLocationsPage = () => {
           });
           setMessage("City created successfully.");
         }
-        await loadLocations();
+        setCityTablePage(1);
+        setRefreshKey((prev) => prev + 1);
         resetCityForm();
       } catch (err) {
         setError(err?.normalized?.message || "Unable to save city.");
@@ -222,7 +165,8 @@ const AdminLocationsPage = () => {
           await cityService.createVenue(payload);
           setMessage("Venue created successfully.");
         }
-        await loadLocations();
+        setVenueTablePage(1);
+        setRefreshKey((prev) => prev + 1);
         resetVenueForm();
       } catch (err) {
         setError(err?.normalized?.message || "Unable to save venue.");
@@ -235,54 +179,132 @@ const AdminLocationsPage = () => {
   const setVenueFieldValue = venueFormik.setFieldValue;
 
   const selectedCity = useMemo(
-    () => cities.find((city) => city.id === venueCityId),
-    [cities, venueCityId]
+    () => cityMap[venueCityId] || null,
+    [cityMap, venueCityId]
   );
 
   useEffect(() => {
     let mounted = true;
-    const fetchLocations = async () => {
-      setLoading(true);
-      try {
-        const { nextCities, nextVenues } = await fetchLocationsData();
+    setLoadingCities(true);
+    cityService
+      .getCitiesAdmin({
+        page: cityTablePage,
+        page_size: CITY_TABLE_PAGE_SIZE,
+        q: citySearchQuery.trim() || undefined,
+        state: cityStateFilter.trim() || undefined,
+      })
+      .then((response) => {
         if (!mounted) return;
-        setCities(nextCities);
-        setVenues(nextVenues);
-        if (!venueFormik.values.city_id && nextCities[0]?.id) {
-          venueFormik.setFieldValue("city_id", nextCities[0].id);
+        setCities(response.items || []);
+        mergeCityLookup(response.items || []);
+        setCityPageMeta({
+          page: response.page || cityTablePage,
+          total_pages: response.total_pages || 1,
+          total: response.total || 0,
+        });
+        if (!venueFormik.values.city_id && response.items?.[0]?.id) {
+          venueFormik.setFieldValue("city_id", response.items[0].id);
         }
-      } catch (err) {
+      })
+      .catch((err) => {
         if (!mounted) return;
-        setError(err?.normalized?.message || "Unable to load locations.");
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-    fetchLocations();
+        setError(err?.normalized?.message || "Unable to load cities.");
+      })
+      .finally(() => {
+        if (mounted) setLoadingCities(false);
+      });
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [cityTablePage, citySearchQuery, cityStateFilter, refreshKey, mergeCityLookup]);
 
   useEffect(() => {
-    if (venueCityId || !cities[0]?.id) return;
-    setVenueFieldValue("city_id", cities[0].id);
-  }, [cities, venueCityId, setVenueFieldValue]);
+    let mounted = true;
+    const query = venueFormCitySearch.trim();
+    const params = query
+      ? { q: query }
+      : { page: 1, page_size: CITY_TABLE_PAGE_SIZE };
+
+    cityService
+      .getCitiesAdmin(params)
+      .then((response) => {
+        if (!mounted) return;
+        const nextItems = response.items || [];
+        setVenueFormCityOptions(nextItems);
+        mergeCityLookup(nextItems);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setVenueFormCityOptions([]);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [venueFormCitySearch, refreshKey, mergeCityLookup]);
 
   useEffect(() => {
-    if (!venueCityFilter) return;
-    if (!cities.some((city) => city.id === venueCityFilter)) {
-      setVenueCityFilter("");
-    }
-  }, [cities, venueCityFilter]);
+    let mounted = true;
+    const query = venueFilterCitySearch.trim();
+    const params = query
+      ? { q: query }
+      : { page: 1, page_size: CITY_TABLE_PAGE_SIZE };
+
+    cityService
+      .getCitiesAdmin(params)
+      .then((response) => {
+        if (!mounted) return;
+        const nextItems = response.items || [];
+        setVenueFilterCityOptions(nextItems);
+        mergeCityLookup(nextItems);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setVenueFilterCityOptions([]);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [venueFilterCitySearch, refreshKey, mergeCityLookup]);
 
   useEffect(() => {
-    if (!cityStateFilter) return;
-    if (!cityStates.includes(cityStateFilter)) {
-      setCityStateFilter("");
-    }
-  }, [cityStateFilter, cityStates]);
+    let mounted = true;
+    setLoadingVenues(true);
+    cityService
+      .getVenues({
+        page: venueTablePage,
+        page_size: VENUE_TABLE_PAGE_SIZE,
+        q: venueSearchQuery.trim() || undefined,
+        city_id: venueCityFilter || undefined,
+      })
+      .then((response) => {
+        if (!mounted) return;
+        setVenues(response.items || []);
+        setVenuePageMeta({
+          page: response.page || venueTablePage,
+          total_pages: response.total_pages || 1,
+          total: response.total || 0,
+        });
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        setError(err?.normalized?.message || "Unable to load venues.");
+      })
+      .finally(() => {
+        if (mounted) setLoadingVenues(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [venueTablePage, venueSearchQuery, venueCityFilter, refreshKey]);
+
+  useEffect(() => {
+    if (venueCityId || !venueFormCityOptions[0]?.id) return;
+    setVenueFieldValue("city_id", venueFormCityOptions[0].id);
+  }, [venueFormCityOptions, venueCityId, setVenueFieldValue]);
 
   useEffect(() => {
     setCityTablePage(1);
@@ -293,12 +315,12 @@ const AdminLocationsPage = () => {
   }, [venueSearchQuery, venueCityFilter]);
 
   useEffect(() => {
-    setCityTablePage((prev) => Math.min(prev, cityTotalPages));
-  }, [cityTotalPages]);
+    setCityTablePage((prev) => Math.min(prev, cityPageMeta.total_pages || 1));
+  }, [cityPageMeta.total_pages]);
 
   useEffect(() => {
-    setVenueTablePage((prev) => Math.min(prev, venueTotalPages));
-  }, [venueTotalPages]);
+    setVenueTablePage((prev) => Math.min(prev, venuePageMeta.total_pages || 1));
+  }, [venuePageMeta.total_pages]);
 
   const onEditCity = (city) => {
     setEditingCityId(city.id);
@@ -334,7 +356,7 @@ const AdminLocationsPage = () => {
       if (editingVenueId === venueId) {
         resetVenueForm();
       }
-      await loadLocations();
+      setRefreshKey((prev) => prev + 1);
       setMessage("Venue soft-deleted successfully.");
     } catch (err) {
       setError(err?.normalized?.message || "Unable to soft-delete venue.");
@@ -368,7 +390,7 @@ const AdminLocationsPage = () => {
         ),
       },
     ],
-    []
+    [onEditCity]
   );
 
   const venueColumns = useMemo(
@@ -377,7 +399,7 @@ const AdminLocationsPage = () => {
       {
         accessorKey: "city_id",
         header: "City",
-        cell: ({ row }) => cityMap[row.original.city_id]?.name || "--",
+        cell: ({ row }) => cityMap[row.original.city_id]?.name || row.original.city_id || "--",
       },
       {
         accessorKey: "venue_type",
@@ -417,7 +439,7 @@ const AdminLocationsPage = () => {
         ),
       },
     ],
-    [cityMap, editingVenueId]
+    [cityMap, editingVenueId, onEditVenue, onSoftDeleteVenue]
   );
 
   const onLocateFromAddress = async () => {
@@ -557,7 +579,7 @@ const AdminLocationsPage = () => {
                   <p className="text-xs text-muted-foreground mb-1">City <span className="text-destructive">*</span></p>
                   <PaginatedCitySelect
                     name="city_id"
-                    cities={cities}
+                    cities={venueFormCityOptions}
                     value={venueFormik.values.city_id}
                     onChange={(nextValue) =>
                       venueFormik.setValues({
@@ -570,7 +592,12 @@ const AdminLocationsPage = () => {
                     onBlur={venueFormik.handleBlur}
                     required
                     includeEmptyOption={false}
+                    pageSize={CITY_TABLE_PAGE_SIZE}
                     searchPlaceholder="Search city"
+                    searchValue={venueFormCitySearch}
+                    onSearchChange={setVenueFormCitySearch}
+                    disableLocalFilter
+                    showAllWhenSearching
                   />
                   {venueFormik.touched.city_id && venueFormik.errors.city_id ? <p className="text-xs text-destructive mt-1">{venueFormik.errors.city_id}</p> : null}
                 </div>
@@ -701,32 +728,24 @@ const AdminLocationsPage = () => {
                 onChange={(event) => setCitySearchQuery(event.target.value)}
                 placeholder="Search city name"
               />
-              <Select
+              <Input
                 value={cityStateFilter}
                 onChange={(event) => setCityStateFilter(event.target.value)}
-              >
-                <option value="">All states</option>
-                {cityStates.map((state) => (
-                  <option key={state} value={state}>
-                    {state}
-                  </option>
-                ))}
-              </Select>
+                placeholder="Filter by state"
+              />
             </div>
             {!cities.length ? (
               <AdminEmptyState message="No cities found." />
-            ) : !filteredCities.length ? (
-              <AdminEmptyState message="No cities match this search." />
             ) : (
               <>
-                <AdminDataTable columns={cityColumns} data={pagedCities} />
+                <AdminDataTable columns={cityColumns} data={cities} />
                 <PaginationControls
                   page={cityTablePage}
-                  totalPages={cityTotalPages}
-                  totalItems={filteredCities.length}
+                  totalPages={cityPageMeta.total_pages}
+                  totalItems={cityPageMeta.total}
                   disabled={loading}
                   onPrevious={() => setCityTablePage((prev) => Math.max(1, prev - 1))}
-                  onNext={() => setCityTablePage((prev) => Math.min(cityTotalPages, prev + 1))}
+                  onNext={() => setCityTablePage((prev) => Math.min(cityPageMeta.total_pages, prev + 1))}
                 />
               </>
             )}
@@ -745,27 +764,30 @@ const AdminLocationsPage = () => {
                 placeholder="Search venue name"
               />
               <PaginatedCitySelect
-                cities={cities}
+                cities={venueFilterCityOptions}
                 value={venueCityFilter}
                 onChange={(nextValue) => setVenueCityFilter(nextValue)}
                 emptyOptionLabel="All cities"
+                pageSize={CITY_TABLE_PAGE_SIZE}
                 searchPlaceholder="Search city"
+                searchValue={venueFilterCitySearch}
+                onSearchChange={setVenueFilterCitySearch}
+                disableLocalFilter
+                showAllWhenSearching
               />
             </div>
             {!venues.length ? (
               <AdminEmptyState message="No venues found." />
-            ) : !filteredVenues.length ? (
-              <AdminEmptyState message="No venues match selected filters." />
             ) : (
               <>
-                <AdminDataTable columns={venueColumns} data={pagedVenues} />
+                <AdminDataTable columns={venueColumns} data={venues} />
                 <PaginationControls
                   page={venueTablePage}
-                  totalPages={venueTotalPages}
-                  totalItems={filteredVenues.length}
+                  totalPages={venuePageMeta.total_pages}
+                  totalItems={venuePageMeta.total}
                   disabled={loading}
                   onPrevious={() => setVenueTablePage((prev) => Math.max(1, prev - 1))}
-                  onNext={() => setVenueTablePage((prev) => Math.min(venueTotalPages, prev + 1))}
+                  onNext={() => setVenueTablePage((prev) => Math.min(venuePageMeta.total_pages, prev + 1))}
                 />
               </>
             )}

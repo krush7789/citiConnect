@@ -57,7 +57,7 @@ const SeatMap = ({ seatMap, selectedSeats, onToggleSeat }) => {
 
   return (
     <div className="overflow-x-auto pb-8">
-      <div className="min-w-[620px]">
+      <div className="min-w-155">
         <div className="mb-10 text-center">
           <div className="mx-auto w-2/3 h-2 bg-muted rounded-full relative">
             <span className="absolute top-3 left-1/2 -translate-x-1/2 text-xs text-muted-foreground">SCREEN THIS WAY</span>

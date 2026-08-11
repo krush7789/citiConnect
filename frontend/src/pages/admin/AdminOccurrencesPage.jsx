@@ -221,7 +221,7 @@ const AdminOccurrencesPage = () => {
           setCities([]);
           setOccurrenceCityId(String(listingResponse.city_id));
         } else {
-          const citiesResponse = await cityService.getCities();
+          const citiesResponse = await cityService.getCities({ page: 1, page_size: 100 });
           if (!mounted) return;
           const nextCities = (citiesResponse.items || []).filter((city) => {
             const normalized = String(city.name || "").trim().toLowerCase();
@@ -282,7 +282,7 @@ const AdminOccurrencesPage = () => {
     }
 
     cityService
-      .getVenues({ city_id: cityToUse })
+      .getVenues({ city_id: cityToUse, page: 1, page_size: 200 })
       .then((response) => {
         if (!mounted) return;
         const nextVenues = response.items || [];

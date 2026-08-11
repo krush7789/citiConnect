@@ -60,12 +60,21 @@ def _serialize_offer_row(offer: Offer, *, now: datetime) -> dict[str, Any]:
 async def get_cities_page(
     db: AsyncSession,
     *,
+    q: str | None,
+    state: str | None,
     is_active: bool | None,
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
+    query = q.strip() if q else None
+    state_filter = state.strip() if state else None
     items, total = await list_cities(
-        db, is_active=is_active, page=page, page_size=page_size
+        db,
+        q=query,
+        state=state_filter,
+        is_active=is_active,
+        page=page,
+        page_size=page_size,
     )
     return build_paginated_response(items, page=page, page_size=page_size, total=total)
 

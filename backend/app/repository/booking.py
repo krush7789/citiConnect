@@ -1,7 +1,7 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import Booking
@@ -15,54 +15,27 @@ from app.models.user_offer_usage import UserOfferUsage
 from app.models.venue import Venue
 from app.utils.datetime_utils import utcnow
 
-HOLD_WINDOW_MINUTES = 10
-
-
 def _active_hold_predicates(reference: datetime):
-    hold_cutoff = reference - timedelta(minutes=HOLD_WINDOW_MINUTES)
     return (
         Booking.status == BookingStatus.HOLD,
         Booking.hold_expires_at.is_not(None),
-        or_(
-            and_(
-                Booking.hold_expires_at >= Booking.created_at,
-                Booking.hold_expires_at > reference,
-            ),
-            and_(
-                Booking.hold_expires_at < Booking.created_at,
-                Booking.created_at > hold_cutoff,
-            ),
-        ),
+        Booking.hold_expires_at > reference,
     )
 
 
 async def expire_stale_holds(db: AsyncSession, now: datetime | None = None) -> int:
     reference = now or utcnow()
-    hold_cutoff = reference - timedelta(minutes=HOLD_WINDOW_MINUTES)
-
-    normal_stmt = (
+    stmt = (
         update(Booking)
         .where(
             Booking.status == BookingStatus.HOLD,
             Booking.hold_expires_at.is_not(None),
-            Booking.hold_expires_at >= Booking.created_at,
             Booking.hold_expires_at <= reference,
         )
         .values(status=BookingStatus.EXPIRED)
     )
-    legacy_stmt = (
-        update(Booking)
-        .where(
-            Booking.status == BookingStatus.HOLD,
-            Booking.hold_expires_at.is_not(None),
-            Booking.hold_expires_at < Booking.created_at,
-            Booking.created_at <= hold_cutoff,
-        )
-        .values(status=BookingStatus.EXPIRED)
-    )
-    normal_result = await db.execute(normal_stmt)
-    legacy_result = await db.execute(legacy_stmt)
-    return int(normal_result.rowcount or 0) + int(legacy_result.rowcount or 0)
+    result = await db.execute(stmt)
+    return int(result.rowcount or 0)
 
 
 async def expire_stale_seat_locks(db: AsyncSession, now: datetime | None = None) -> int:

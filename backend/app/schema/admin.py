@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import (
     BookingStatus,
@@ -15,10 +15,112 @@ from app.models.enums import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Reusable validator helpers
+# ---------------------------------------------------------------------------
+
+def _strip_or_none(v: str | None) -> str | None:
+    """Strip whitespace; convert empty string to None."""
+    if v is None:
+        return None
+    cleaned = v.strip()
+    return cleaned or None
+
+
+def _title_case(v: str) -> str:
+    """Collapse whitespace, then capitalise each word."""
+    compact = " ".join(str(v or "").strip().split())
+    if not compact:
+        return ""
+    return " ".join(
+        token[:1].upper() + token[1:].lower() if token else ""
+        for token in compact.split(" ")
+    )
+
+
+def _title_case_or_none(v: str | None) -> str | None:
+    """Title-case a string; return None if empty after cleaning."""
+    if v is None:
+        return None
+    result = _title_case(v)
+    return result or None
+
+
+def _clean_string_list(v: list[str] | None) -> list[str] | None:
+    """Strip items, drop empties; convert empty list to None."""
+    if not v:
+        return None
+    cleaned = [item.strip() for item in v if isinstance(item, str) and item.strip()]
+    return cleaned or None
+
+
+def _ensure_dict(v: Any) -> dict[str, Any]:
+    """Guarantee a dict; default to {} if not a dict."""
+    return v if isinstance(v, dict) else {}
+
+
+def _coerce_discount_type(v: Any) -> DiscountType:
+    """Normalise discount_type strings: strip, upper, alias PERCENTAGE→PERCENT."""
+    if isinstance(v, DiscountType):
+        return v
+    candidate = str(v).strip().upper()
+    if candidate == "PERCENTAGE":
+        candidate = "PERCENT"
+    return DiscountType(candidate)
+
+
+def _normalize_limit(v: int | None) -> int | None:
+    """Convert zero or negative limits to None."""
+    if v is None or v <= 0:
+        return None
+    return v
+
+
+def _strip_upper(v: str | None) -> str | None:
+    """Strip and upper-case a string (preserve empty string for field constraints)."""
+    if v is None:
+        return None
+    return v.strip().upper()
+
+
+def _strip_text(v: str | None) -> str | None:
+    """Strip whitespace only (no case change)."""
+    if v is None:
+        return None
+    return v.strip()
+
+
+def _ensure_seat_layout(v: Any) -> Any | None:
+    """Only accept dict or list for seat layout."""
+    if isinstance(v, (dict, list)):
+        return v
+    return None
+
+
+def _normalize_ticket_pricing(v: dict[str, Any] | None) -> dict[str, float] | None:
+    """Normalise ticket pricing keys to upper-case, values to float."""
+    if not isinstance(v, dict):
+        return None
+    normalized: dict[str, float] = {}
+    for key, value in v.items():
+        key_text = str(key).strip().upper()
+        if not key_text or value is None:
+            continue
+        try:
+            normalized[key_text] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return normalized or None
+
+
+# ---------------------------------------------------------------------------
+# Request schemas — Offers
+# ---------------------------------------------------------------------------
+
 class OfferCreateRequest(BaseModel):
     code: str = Field(min_length=2, max_length=80)
     title: str = Field(min_length=2, max_length=180)
-    discount_type: str
+    discount_type: DiscountType
     discount_value: Decimal = Field(gt=0)
     min_order_value: Decimal | None = None
     max_discount_value: Decimal | None = None
@@ -29,11 +131,31 @@ class OfferCreateRequest(BaseModel):
     is_active: bool = True
     applicability: dict[str, Any] | None = None
 
+    @field_validator("code", mode="before")
+    @classmethod
+    def _upper_code(cls, v: Any) -> Any:
+        return _strip_upper(v)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _strip_title(cls, v: Any) -> Any:
+        return _strip_text(v)
+
+    @field_validator("discount_type", mode="before")
+    @classmethod
+    def _coerce_dt(cls, v: Any) -> Any:
+        return _coerce_discount_type(v)
+
+    @field_validator("usage_limit", "user_usage_limit", mode="before")
+    @classmethod
+    def _norm_limit(cls, v: Any) -> Any:
+        return _normalize_limit(v)
+
 
 class OfferUpdateRequest(BaseModel):
     code: str | None = Field(default=None, min_length=2, max_length=80)
     title: str | None = Field(default=None, min_length=2, max_length=180)
-    discount_type: str | None = None
+    discount_type: DiscountType | None = None
     discount_value: Decimal | None = Field(default=None, gt=0)
     min_order_value: Decimal | None = None
     max_discount_value: Decimal | None = None
@@ -44,6 +166,28 @@ class OfferUpdateRequest(BaseModel):
     is_active: bool | None = None
     applicability: dict[str, Any] | None = None
 
+    @field_validator("code", mode="before")
+    @classmethod
+    def _upper_code(cls, v: Any) -> Any:
+        return _strip_upper(v)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _strip_title(cls, v: Any) -> Any:
+        return _strip_text(v)
+
+    @field_validator("discount_type", mode="before")
+    @classmethod
+    def _coerce_dt(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _coerce_discount_type(v)
+
+    @field_validator("usage_limit", "user_usage_limit", mode="before")
+    @classmethod
+    def _norm_limit(cls, v: Any) -> Any:
+        return _normalize_limit(v)
+
 
 class CityCreateRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
@@ -51,12 +195,44 @@ class CityCreateRequest(BaseModel):
     image_url: str | None = Field(default=None, max_length=512)
     is_active: bool = True
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def _tc_name(cls, v: Any) -> Any:
+        return _title_case(v)
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _tc_state(cls, v: Any) -> Any:
+        return _title_case_or_none(v)
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def _strip_image(cls, v: Any) -> Any:
+        return _strip_or_none(v)
+
 
 class CityUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=120)
     state: str | None = Field(default=None, max_length=120)
     image_url: str | None = Field(default=None, max_length=512)
     is_active: bool | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _tc_name(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _title_case(v)
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _tc_state(cls, v: Any) -> Any:
+        return _title_case_or_none(v)
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def _strip_image(cls, v: Any) -> Any:
+        return _strip_or_none(v)
 
 
 class VenueCreateRequest(BaseModel):
@@ -68,6 +244,16 @@ class VenueCreateRequest(BaseModel):
     longitude: float | None = None
     is_active: bool = True
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def _tc_name(cls, v: Any) -> Any:
+        return _title_case(v)
+
+    @field_validator("address", mode="before")
+    @classmethod
+    def _strip_addr(cls, v: Any) -> Any:
+        return _strip_or_none(v)
+
 
 class VenueUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=180)
@@ -77,6 +263,18 @@ class VenueUpdateRequest(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     is_active: bool | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _tc_name(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _title_case(v)
+
+    @field_validator("address", mode="before")
+    @classmethod
+    def _strip_addr(cls, v: Any) -> Any:
+        return _strip_or_none(v)
 
 
 class ListingCreateRequest(BaseModel):
@@ -97,6 +295,26 @@ class ListingCreateRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     vibe_tags: list[str] | None = None
 
+    @field_validator("title", mode="before")
+    @classmethod
+    def _tc_title(cls, v: Any) -> Any:
+        return _title_case(v)
+
+    @field_validator("description", "category", "offer_text", "cover_image_url", mode="before")
+    @classmethod
+    def _strip_opt(cls, v: Any) -> Any:
+        return _strip_or_none(v)
+
+    @field_validator("gallery_image_urls", "vibe_tags", mode="before")
+    @classmethod
+    def _clean_list(cls, v: Any) -> Any:
+        return _clean_string_list(v)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _dict_meta(cls, v: Any) -> Any:
+        return _ensure_dict(v)
+
 
 class ListingUpdateRequest(BaseModel):
     type: ListingType | None = None
@@ -115,6 +333,30 @@ class ListingUpdateRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     vibe_tags: list[str] | None = None
 
+    @field_validator("title", mode="before")
+    @classmethod
+    def _tc_title(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _title_case(v)
+
+    @field_validator("description", "category", "offer_text", "cover_image_url", mode="before")
+    @classmethod
+    def _strip_opt(cls, v: Any) -> Any:
+        return _strip_or_none(v)
+
+    @field_validator("gallery_image_urls", "vibe_tags", mode="before")
+    @classmethod
+    def _clean_list(cls, v: Any) -> Any:
+        return _clean_string_list(v)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _dict_meta(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _ensure_dict(v)
+
 
 class OccurrenceCreateItem(BaseModel):
     start_time: datetime
@@ -124,6 +366,23 @@ class OccurrenceCreateItem(BaseModel):
     capacity_total: int = Field(gt=0)
     ticket_pricing: dict[str, Any] | None = None
     seat_layout: Any | None = None
+
+    @field_validator("provider_sub_location", mode="before")
+    @classmethod
+    def _tc_sub(cls, v: Any) -> Any:
+        return _title_case_or_none(v)
+
+    @field_validator("ticket_pricing", mode="before")
+    @classmethod
+    def _norm_pricing(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _ensure_dict(v)
+
+    @field_validator("seat_layout", mode="before")
+    @classmethod
+    def _norm_layout(cls, v: Any) -> Any:
+        return _ensure_seat_layout(v)
 
 
 class OccurrenceCreateRequest(BaseModel):
@@ -140,9 +399,31 @@ class OccurrenceUpdateRequest(BaseModel):
     seat_layout: Any | None = None
     status: OccurrenceStatus | None = None
 
+    @field_validator("provider_sub_location", mode="before")
+    @classmethod
+    def _tc_sub(cls, v: Any) -> Any:
+        return _title_case_or_none(v)
+
+    @field_validator("ticket_pricing", mode="before")
+    @classmethod
+    def _norm_pricing(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _ensure_dict(v)
+
+    @field_validator("seat_layout", mode="before")
+    @classmethod
+    def _norm_layout(cls, v: Any) -> Any:
+        return _ensure_seat_layout(v)
+
 
 class OccurrenceCancelRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=250)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _strip_reason(cls, v: Any) -> Any:
+        return _strip_or_none(v)
 
 
 class AdminDashboardStats(BaseModel):

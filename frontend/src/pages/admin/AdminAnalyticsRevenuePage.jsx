@@ -68,7 +68,7 @@ const AdminAnalyticsRevenuePage = () => {
 
   const cityQuery = useQuery({
     queryKey: ["analytics-revenue-cities"],
-    queryFn: () => cityService.getCities(),
+    queryFn: () => cityService.getCities({ page: 1, page_size: 100 }),
   });
   const cities = cityQuery.data?.items || [];
 

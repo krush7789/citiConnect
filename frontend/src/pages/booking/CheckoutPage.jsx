@@ -45,11 +45,27 @@ const resolveSelectionPath = (booking, listing) => {
   return `/listings/${listingId}/occurrences`;
 };
 let razorpayScriptPromise = null;
+let pageLoadPromise = null;
+
+const waitForWindowLoad = async () => {
+  if (typeof window === "undefined") return;
+  if (document.readyState === "complete") return;
+  if (!pageLoadPromise) {
+    pageLoadPromise = new Promise((resolve) => {
+      window.addEventListener("load", () => resolve(), { once: true });
+    }).finally(() => {
+      pageLoadPromise = null;
+    });
+  }
+  await pageLoadPromise;
+};
 
 const ensureRazorpayScript = async () => {
   if (typeof window === "undefined") {
     throw new Error("Payment window is not available.");
   }
+  if (window.Razorpay) return;
+  await waitForWindowLoad();
   if (window.Razorpay) return;
 
   if (!razorpayScriptPromise) {
@@ -320,7 +336,7 @@ const CheckoutPage = () => {
 
       return true;
     });
-  }, [availableOffers, booking?.listing_snapshot?.listing_id, booking?.listing_snapshot?.type, booking?.total_price, listing?.category, listing?.city_id, listing?.id, listing?.type]);
+  }, [availableOffers, booking?.listing_snapshot?.city_id, booking?.listing_snapshot?.listing_id, booking?.listing_snapshot?.type, booking?.total_price, listing?.category, listing?.city_id, listing?.id, listing?.type]);
 
   const loadApplicableOffers = useCallback(async () => {
     const listingType = normalizeToken(listing?.type || booking?.listing_snapshot?.type);

@@ -7,17 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependency import get_optional_current_user
-from app.schema.common import PaginatedResponse
 from app.schema.listing import (
     ListingDetailResponse,
-    ListingFiltersResponse,
-    ListingItem,
     ListingOccurrencesResponse,
+    ListingPageResponse,
+    ListingSort,
     SeatMapResponse,
 )
 from app.services.listings import (
     get_listing_detail_by_id,
-    get_listing_filters,
     get_listing_occurrences_by_listing_id,
     get_listings_page,
     get_occurrence_seat_map,
@@ -26,16 +24,7 @@ from app.services.listings import (
 router = APIRouter(tags=["listings"])
 
 
-@router.get("/listings/filters", response_model=ListingFiltersResponse)
-async def listing_filters(
-    city_id: UUID | None = Query(default=None),
-    types: str | None = Query(default=None),
-    db: AsyncSession = Depends(get_db),
-):
-    return await get_listing_filters(db, city_id=city_id, types=types)
-
-
-@router.get("/listings", response_model=PaginatedResponse[ListingItem])
+@router.get("/listings", response_model=ListingPageResponse)
 async def get_listings(
     types: str | None = Query(default=None),
     city_id: UUID | None = Query(default=None),
@@ -46,7 +35,7 @@ async def get_listings(
     price_max: Decimal | None = Query(default=None),
     q: str | None = Query(default=None),
     is_featured: bool | None = Query(default=None),
-    sort: str = Query(default="newest"),
+    sort: ListingSort = Query(default="newest"),
     user_lat: float | None = Query(default=None),
     user_lon: float | None = Query(default=None),
     radius_km: float | None = Query(default=None, gt=0),

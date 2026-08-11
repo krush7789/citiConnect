@@ -268,13 +268,13 @@ export const SimpleDonutChart = ({
   hideLegend = false,
 }) => {
   const [hovered, setHovered] = useState(null);
-  const rows = data || [];
-  const total = rows.reduce((sum, row) => sum + toNumber(row[valueKey]), 0);
 
-  const slices = useMemo(() => {
+  const { slices, total } = useMemo(() => {
+    const rows = data || [];
+    const totalVal = rows.reduce((sum, row) => sum + toNumber(row[valueKey]), 0);
     const items = rows.map((row, index) => {
       const value = toNumber(row[valueKey]);
-      const percentage = total > 0 ? (value / total) * 100 : 0;
+      const percentage = totalVal > 0 ? (value / totalVal) * 100 : 0;
       return {
         label: String(row[labelKey] || "Unknown"),
         value,
@@ -284,16 +284,18 @@ export const SimpleDonutChart = ({
       };
     });
 
-    let running = 0;
-    return items.map((slice) => {
+    let currentAngle = 0;
+    const result = [];
+    for (const slice of items) {
       const spanDeg = (slice.percentage / 100) * 360;
       const halfGap = items.length > 1 ? GAP_DEG / 2 : 0;
-      const startDeg = running + halfGap;
-      const endDeg = running + spanDeg - halfGap;
-      running += spanDeg;
-      return { ...slice, startDeg, endDeg, spanDeg };
-    });
-  }, [rows, labelKey, valueKey, colors, total]);
+      const startDeg = currentAngle + halfGap;
+      const endDeg = currentAngle + spanDeg - halfGap;
+      currentAngle += spanDeg;
+      result.push({ ...slice, startDeg, endDeg, spanDeg });
+    }
+    return { slices: result, total: totalVal };
+  }, [data, labelKey, valueKey, colors]);
 
   const activeSlice = hovered !== null ? slices[hovered] : null;
 

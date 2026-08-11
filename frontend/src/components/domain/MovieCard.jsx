@@ -1,8 +1,10 @@
 import React from "react";
-import { Heart, Star } from "lucide-react";
+import { Heart, MapPin, Star } from "lucide-react";
 import { Link } from "react-router-dom";
+import { formatDistanceKm } from "@/lib/format";
 
-const MovieCard = ({ listing, compact = false, onToggleWishlist }) => {
+const MovieCard = ({ listing, compact = false, onToggleWishlist, showDistance = false }) => {
+  const distanceLabel = showDistance ? formatDistanceKm(listing.distance_km) : "";
   const coverImageUrl =
     (typeof listing.cover_image_url === "string" && listing.cover_image_url.trim()) ||
     (typeof listing.gallery_image_urls?.[0] === "string" && listing.gallery_image_urls[0].trim()) ||
@@ -45,6 +47,12 @@ const MovieCard = ({ listing, compact = false, onToggleWishlist }) => {
         <div>
           <h3 className="text-sm font-semibold leading-tight line-clamp-1">{listing.title}</h3>
           <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{listing.category}</p>
+          {showDistance && distanceLabel ? (
+            <p className="text-xs text-muted-foreground mt-1 inline-flex items-center gap-1">
+              <MapPin className="h-3 w-3" />
+              {distanceLabel}
+            </p>
+          ) : null}
         </div>
         {onToggleWishlist ? (
           <button

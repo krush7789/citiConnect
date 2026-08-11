@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.dependency import get_current_user
 from app.schema.booking import (
     ApplyOfferRequest,
+    BookingScope,
     BookingCancelResponse,
     BookingItem,
     BookingLockRequest,
@@ -87,7 +88,7 @@ async def confirm_booking(
 
 @router.get("", response_model=PaginatedResponse[BookingItem])
 async def get_bookings(
-    scope: str = Query(default="upcoming"),
+    scope: BookingScope = Query(default="upcoming"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user=Depends(get_current_user),

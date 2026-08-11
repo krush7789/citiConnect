@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import raise_api_error
 from app.models.enums import NotificationType
-from app.repository.notifications import (
+from app.repository.notification import (
     list_user_notifications,
     mark_all_notifications_read,
     mark_notification_read,

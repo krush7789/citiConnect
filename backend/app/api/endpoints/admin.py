@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependency import require_admin
-from app.models.enums import ListingType
+from app.models.enums import BookingStatus, ListingStatus, ListingType, OccurrenceStatus
 from app.schema.admin import (
     AdminAuditLogItem,
     AdminBookingItem,
@@ -146,8 +146,8 @@ async def get_dashboard_drill(
 
 @router.get("/listings", response_model=PaginatedResponse[AdminListingListItem])
 async def get_admin_listings(
-    type: str | None = Query(default=None),
-    status: str | None = Query(default=None),
+    type: ListingType | None = Query(default=None),
+    status: ListingStatus | None = Query(default=None),
     city: str | None = Query(default=None),
     q: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
@@ -222,7 +222,7 @@ async def archive_admin_listing(
 )
 async def get_admin_occurrences(
     listing_id: UUID,
-    status: str | None = Query(default=None),
+    status: OccurrenceStatus | None = Query(default=None),
     q: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
@@ -292,7 +292,7 @@ async def cancel_admin_occurrence(
 
 @router.get("/bookings", response_model=PaginatedResponse[AdminBookingItem])
 async def get_admin_bookings(
-    status: str | None = Query(default=None),
+    status: BookingStatus | None = Query(default=None),
     listing_type: ListingType | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),

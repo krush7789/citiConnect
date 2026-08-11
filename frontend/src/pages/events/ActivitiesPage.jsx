@@ -1,15 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import HeroCarousel from "@/components/common/HeroCarousel";
 import FilterRow from "@/components/common/FilterRow";
 import EventCard from "@/components/domain/EventCard";
 import SortFilterModal from "@/components/common/SortFilterModal";
 import PaginationControls from "@/components/common/PaginationControls";
-import { listingService } from "@/api/services";
 import useSelectedCity from "@/hooks/useSelectedCity";
 import useUserLocation from "@/hooks/useUserLocation";
 import useWishlistToggle from "@/hooks/useWishlistToggle";
+import useListings from "@/hooks/useListings";
 
 const sortOptions = [
   { value: "date", label: "Date" },
@@ -41,50 +40,28 @@ const ActivitiesPage = () => {
     setPage(1);
   }, [cityId]);
 
-  const filtersQuery = useQuery({
-    queryKey: ["listing-filters", "ACTIVITY", cityId || "all"],
-    queryFn: () => listingService.getFilters({ city_id: cityId, types: "ACTIVITY" }),
+  const listingsQuery = useListings({
+    cityId,
+    types: "ACTIVITY",
+    category: activeFilter,
+    sort,
+    fallbackSort: "date",
+    page,
+    pageSize: 12,
+    userCoords,
+    distanceSortEnabled,
+    locationLoading,
   });
 
-  const filters = useMemo(
-    () => ["All", ...(filtersQuery.data?.categories || ["Adventure", "Workshops", "Family"])],
-    [filtersQuery.data]
-  );
+  const filters = useMemo(() => {
+    const categories = listingsQuery.data?.categories;
+    return ["All", ...(categories?.length ? categories : ["Adventure", "Workshops", "Family"])];
+  }, [listingsQuery.data?.categories]);
 
   useEffect(() => {
     if (filters.includes(activeFilter)) return;
     setActiveFilter("All");
   }, [filters, activeFilter]);
-
-  const listingsQuery = useQuery({
-    queryKey: [
-      "listings-feed",
-      "ACTIVITY",
-      cityId || "all",
-      activeFilter,
-      sort,
-      page,
-      userCoords?.latitude || null,
-      userCoords?.longitude || null,
-    ],
-    enabled: !(distanceSortEnabled && locationLoading),
-    queryFn: () => {
-      const effectiveSort = distanceSortEnabled && !userCoords ? "date" : sort;
-      const queryParams = {
-        city_id: cityId,
-        types: "ACTIVITY",
-        category: activeFilter !== "All" ? activeFilter : undefined,
-        sort: effectiveSort,
-        page,
-        page_size: 12,
-      };
-      if (distanceSortEnabled && userCoords) {
-        queryParams.user_lat = userCoords.latitude;
-        queryParams.user_lon = userCoords.longitude;
-      }
-      return listingService.getListings(queryParams);
-    },
-  });
 
   useEffect(() => {
     setActivities(listingsQuery.data?.items || []);

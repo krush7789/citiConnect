@@ -126,14 +126,12 @@ class Config:
 
     @property
     def normalized_database_url(self) -> str:
-        if (
-            self.database_url.startswith("postgresql://")
-            and "+asyncpg" not in self.database_url
-        ):
-            return self.database_url.replace(
-                "postgresql://", "postgresql+asyncpg://", 1
-            )
-        return self.database_url
+        url = self.database_url
+        if url.startswith("postgresql://") and "+asyncpg" not in url:
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if "+asyncpg" in url and "sslmode=" in url:
+            url = url.replace("sslmode=require", "ssl=require").replace("sslmode=prefer", "ssl=require").replace("sslmode=verify-full", "ssl=require").replace("sslmode=verify-ca", "ssl=require")
+        return url
 
     @property
     def cors_origin_list(self) -> list[str]:

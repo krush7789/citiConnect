@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { LayoutDashboard, MapPin, Search } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import SearchModal from "@/components/common/SearchModal";
 import ProfileDrawer from "@/components/layout/ProfileDrawer";
@@ -50,7 +50,7 @@ const Navbar = () => {
   useEffect(() => {
     let mounted = true;
     cityService
-      .getCities()
+      .getCities({ page: 1, page_size: 100 })
       .then((response) => {
         if (!mounted) return;
         const nextCities = response.items || [];
@@ -164,6 +164,9 @@ const Navbar = () => {
                   </Button>
                 </SheetTrigger>
                 <SheetContent className="p-0 w-[320px]">
+                  <VisuallyHidden>
+                    <SheetTitle>Profile</SheetTitle>
+                  </VisuallyHidden>
                   <ProfileDrawer onClose={() => setProfileOpen(false)} />
                 </SheetContent>
               </Sheet>

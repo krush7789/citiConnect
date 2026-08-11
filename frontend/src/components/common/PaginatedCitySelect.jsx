@@ -24,8 +24,13 @@ const PaginatedCitySelect = ({
   selectClassName,
   size,
   tone,
+  searchValue,
+  onSearchChange,
+  disableLocalFilter = false,
+  showAllWhenSearching = false,
 }) => {
-  const [searchQuery, setSearchQuery] = useState("");
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const searchQuery = searchValue !== undefined ? searchValue : internalSearchQuery;
 
   const cityOptions = useMemo(
     () =>
@@ -42,15 +47,20 @@ const PaginatedCitySelect = ({
   );
 
   const filteredOptions = useMemo(() => {
+    if (disableLocalFilter) return cityOptions;
     const query = String(searchQuery || "").trim().toLowerCase();
     if (!query) return cityOptions;
     return cityOptions.filter((option) => option.searchText.includes(query));
-  }, [cityOptions, searchQuery]);
+  }, [cityOptions, searchQuery, disableLocalFilter]);
 
   const safePageSize = Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE);
 
   const visibleOptions = useMemo(() => {
-    const limited = filteredOptions.slice(0, safePageSize);
+    const shouldLimit =
+      !showAllWhenSearching || !String(searchQuery || "").trim();
+    const limited = shouldLimit
+      ? filteredOptions.slice(0, safePageSize)
+      : filteredOptions;
     if (!value) return limited;
     if (limited.some((option) => option.value === value)) return limited;
     const selectedOption = filteredOptions.find((option) => option.value === value);
@@ -61,13 +71,23 @@ const PaginatedCitySelect = ({
         .filter((option) => option.value !== selectedOption.value)
         .slice(0, safePageSize - 1),
     ];
-  }, [filteredOptions, safePageSize, value]);
+  }, [filteredOptions, safePageSize, searchQuery, showAllWhenSearching, value]);
+
+  const onSearchInputChange = (event) => {
+    const nextValue = event.target.value;
+    if (searchValue === undefined) {
+      setInternalSearchQuery(nextValue);
+    }
+    if (onSearchChange) {
+      onSearchChange(nextValue, event);
+    }
+  };
 
   return (
     <div className={cn("space-y-2", className)}>
       <Input
         value={searchQuery}
-        onChange={(event) => setSearchQuery(event.target.value)}
+        onChange={onSearchInputChange}
         placeholder={searchPlaceholder}
         disabled={disabled}
         className={inputClassName}

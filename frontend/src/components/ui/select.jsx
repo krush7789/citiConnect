@@ -1,4 +1,4 @@
-import * as React from "react";
+import {forwardRef} from "react";
 import { ChevronDown } from "lucide-react";
 import { cva } from "class-variance-authority";
 
@@ -51,7 +51,7 @@ const selectIconVariants = cva(
   }
 );
 
-const Select = React.forwardRef(
+const Select = forwardRef(
   (
     {
       className,

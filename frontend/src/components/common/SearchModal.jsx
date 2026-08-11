@@ -108,6 +108,23 @@ const SearchModal = ({ onClose }) => {
         ))}
       </div>
 
+      {!query && !activeType && recentSearches.length > 0 && (
+        <div className="space-y-1.5 pt-1">
+          <p className="text-xs text-muted-foreground font-medium">Recent / Popular Searches:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {recentSearches.map((term) => (
+              <Badge
+                key={term}
+                onClick={() => setQuery(term)}
+                className="cursor-pointer bg-muted/60 text-muted-foreground hover:text-foreground text-xs"
+              >
+                {term}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
         {loading ? <p className="text-sm text-muted-foreground">Searching...</p> : null}
         {!loading &&

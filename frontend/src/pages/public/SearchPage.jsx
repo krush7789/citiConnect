@@ -1,19 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import FilterRow from "@/components/common/FilterRow";
 import EventCard from "@/components/domain/EventCard";
 import SortFilterModal from "@/components/common/SortFilterModal";
 import PaginationControls from "@/components/common/PaginationControls";
-import { listingService } from "@/api/services";
 import useSelectedCity from "@/hooks/useSelectedCity";
 import useUserLocation from "@/hooks/useUserLocation";
 import useWishlistToggle from "@/hooks/useWishlistToggle";
+import useListings from "@/hooks/useListings";
 
-const defaultSort = "relevance";
+const defaultSort = "popularity";
 
 const sortOptions = [
-  { value: "relevance", label: "Relevance" },
   { value: "date", label: "Date" },
   { value: "price_asc", label: "Price: Low to high" },
   { value: "price_desc", label: "Price: High to low" },
@@ -21,6 +19,12 @@ const sortOptions = [
   { value: "popularity", label: "Popularity" },
   { value: "distance", label: "Distance" },
 ];
+
+const normalizeSortValue = (value) => {
+  if (!value) return defaultSort;
+  if (value === "relevance") return "popularity";
+  return sortOptions.some((option) => option.value === value) ? value : defaultSort;
+};
 
 const SearchPage = () => {
   const cityId = useSelectedCity();
@@ -31,55 +35,33 @@ const SearchPage = () => {
   const q = params.get("q") || "";
   const types = params.get("types") || "";
   const category = params.get("category") || "All";
-  const sort = params.get("sort") || defaultSort;
+  const sort = normalizeSortValue(params.get("sort"));
   const page = Number(params.get("page") || 1);
   const distanceSortEnabled = sort === "distance";
   const { coords: userCoords, loading: locationLoading, error: locationError } = useUserLocation(distanceSortEnabled);
 
   const toggleWishlist = useWishlistToggle(setItems);
   const sortLabel = useMemo(
-    () => sortOptions.find((option) => option.value === sort)?.label || "Relevance",
+    () => sortOptions.find((option) => option.value === sort)?.label || "Popularity",
     [sort]
   );
 
-  const filtersQuery = useQuery({
-    queryKey: ["listing-filters", "SEARCH", cityId || "all", types || "all"],
-    queryFn: () => listingService.getFilters({ city_id: cityId, types }),
+  const listingsQuery = useListings({
+    cityId,
+    types,
+    query: q,
+    category,
+    sort,
+    fallbackSort: defaultSort,
+    page,
+    pageSize: 12,
+    userCoords,
+    distanceSortEnabled,
+    locationLoading,
+    queryKeyPrefix: "listings-search",
   });
 
-  const filters = useMemo(() => ["All", ...(filtersQuery.data?.categories || [])], [filtersQuery.data]);
-
-  const listingsQuery = useQuery({
-    queryKey: [
-      "listings-search",
-      cityId || "all",
-      q,
-      types,
-      category,
-      sort,
-      page,
-      userCoords?.latitude || null,
-      userCoords?.longitude || null,
-    ],
-    enabled: !(distanceSortEnabled && locationLoading),
-    queryFn: () => {
-      const effectiveSort = distanceSortEnabled && !userCoords ? defaultSort : sort;
-      const queryParams = {
-        city_id: cityId,
-        q: q || undefined,
-        types: types || undefined,
-        category: category !== "All" ? category : undefined,
-        sort: effectiveSort,
-        page,
-        page_size: 12,
-      };
-      if (distanceSortEnabled && userCoords) {
-        queryParams.user_lat = userCoords.latitude;
-        queryParams.user_lon = userCoords.longitude;
-      }
-      return listingService.getListings(queryParams);
-    },
-  });
+  const filters = useMemo(() => ["All", ...(listingsQuery.data?.categories || [])], [listingsQuery.data?.categories]);
 
   useEffect(() => {
     setItems(listingsQuery.data?.items || []);

@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
+
+import { useState, useEffect, useCallback } from "react";
 import { Bell } from "lucide-react";
 import { notificationService } from "@/api/services";
 import { useAuth } from "@/context/AuthContext";

@@ -1,7 +1,5 @@
 from uuid import UUID
 
-from datetime import datetime
-
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 

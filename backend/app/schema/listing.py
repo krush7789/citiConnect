@@ -1,10 +1,22 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from app.models.enums import ListingStatus, ListingType, OccurrenceStatus
+from app.schema.common import PaginatedResponse
+
+ListingSort = Literal[
+    "newest",
+    "price_asc",
+    "price_desc",
+    "date",
+    "popularity",
+    "distance",
+    "relevance",
+]
 
 
 class CityRef(BaseModel):
@@ -44,10 +56,8 @@ class ListingItem(BaseModel):
     distance_km: float | None = None
 
 
-class ListingFiltersResponse(BaseModel):
-    categories: list[str]
-    vibe_tags: list[str]
-    price_range: dict[str, float]
+class ListingPageResponse(PaginatedResponse[ListingItem]):
+    categories: list[str] = []
 
 
 class OccurrenceItem(BaseModel):

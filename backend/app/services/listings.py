@@ -4,26 +4,32 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import raise_api_error
 from app.models.enums import ListingType
-from app.repository import listings as listings_repository
+from app.models.venue import Venue
+from app.repository.booking import (
+    expire_stale_seat_locks,
+    get_active_hold_quantities_by_occurrence,
+)
+from app.repository.listing import (
+    get_active_seat_locks,
+    get_confirmed_booked_seats,
+    get_filters_metadata,
+    get_listing_by_id,
+    get_next_occurrences_for_listing_ids,
+    get_occurrence_by_id,
+    list_listings,
+    list_occurrences_for_listing,
+)
+from app.schema.listing import ListingSort
 from app.services.listing import format_listing_list_item
 from app.utils.datetime_utils import to_end_of_day, to_start_of_day, utcnow
 from app.utils.pagination import build_paginated_response
 from app.utils.pricing import normalize_ticket_pricing
 from app.utils.seat_layout import normalize_seat_layout, sort_seat_id_key
-
-SORT_OPTIONS = {
-    "newest",
-    "price_asc",
-    "price_desc",
-    "date",
-    "popularity",
-    "distance",
-    "relevance",
-}
 
 
 def parse_listing_types(raw: str | None) -> list[ListingType] | None:
@@ -79,18 +85,18 @@ def serialize_occurrence(
     }
 
 
-async def get_listing_filters(
-    db: AsyncSession,
-    *,
-    city_id: UUID | None,
-    types: str | None,
-) -> dict[str, Any]:
-    type_values = parse_listing_types(types)
-    return await listings_repository.fetch_listing_filters_metadata(
-        db,
-        city_id=city_id,
-        types=type_values,
+async def _fetch_venue_name_map_for_occurrences(
+    db: AsyncSession, occurrences: list[Any]
+) -> dict[UUID, str]:
+    venue_ids = sorted(
+        {occ.venue_id for occ in occurrences if getattr(occ, "venue_id", None)}
     )
+    if not venue_ids:
+        return {}
+    rows = (
+        await db.execute(select(Venue.id, Venue.name).where(Venue.id.in_(venue_ids)))
+    ).all()
+    return {row[0]: row[1] for row in rows}
 
 
 async def get_listings_page(
@@ -105,7 +111,7 @@ async def get_listings_page(
     price_max: Decimal | None,
     q: str | None,
     is_featured: bool | None,
-    sort: str,
+    sort: ListingSort,
     user_lat: float | None,
     user_lon: float | None,
     radius_km: float | None,
@@ -113,14 +119,6 @@ async def get_listings_page(
     page_size: int,
     current_user_id: UUID | None,
 ) -> dict[str, Any]:
-    if sort not in SORT_OPTIONS:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"sort": "Invalid sort value"}},
-        )
-
     if sort == "distance" and (user_lat is None or user_lon is None):
         raise_api_error(
             422,
@@ -151,7 +149,7 @@ async def get_listings_page(
     start_dt = to_start_of_day(date_from)
     end_dt = to_end_of_day(date_to)
 
-    rows, total = await listings_repository.fetch_public_listings(
+    rows, total = await list_listings(
         db,
         types=type_values,
         city_id=city_id,
@@ -172,13 +170,11 @@ async def get_listings_page(
     )
 
     listing_ids = [row[0].id for row in rows]
-    next_occurrences = await listings_repository.fetch_next_occurrences_for_listing_ids(
-        db, listing_ids
-    )
+    next_occurrences = await get_next_occurrences_for_listing_ids(db, listing_ids)
     next_occurrence_ids = [occ.id for occ in next_occurrences.values()]
-    hold_quantities_by_occurrence = await listings_repository.fetch_active_hold_quantities(
+    hold_quantities_by_occurrence = await get_active_hold_quantities_by_occurrence(
         db,
-        next_occurrence_ids,
+        occurrence_ids=next_occurrence_ids,
         now=utcnow(),
     )
     items = [
@@ -189,28 +185,33 @@ async def get_listings_page(
         )
         for row in rows
     ]
-    return build_paginated_response(items, page=page, page_size=page_size, total=total)
+    response = build_paginated_response(items, page=page, page_size=page_size, total=total)
+    filters = await get_filters_metadata(
+        db,
+        city_id=city_id,
+        types=type_values,
+    )
+    response["categories"] = filters.get("categories", [])
+    return response
 
 
 async def get_listing_detail_by_id(
     db: AsyncSession, listing_id: UUID
 ) -> dict[str, Any]:
-    record = await listings_repository.fetch_listing_record(db, listing_id)
+    record = await get_listing_by_id(db, listing_id)
     if not record:
         raise_api_error(404, "NOT_FOUND", "Listing not found")
 
     listing, city, venue = record
-    occurrences = await listings_repository.fetch_occurrences_for_listing(
+    occurrences = await list_occurrences_for_listing(
         db, listing_id=listing_id, date_from=None, date_to=None
     )
-    hold_quantities_by_occurrence = await listings_repository.fetch_active_hold_quantities(
+    hold_quantities_by_occurrence = await get_active_hold_quantities_by_occurrence(
         db,
-        [occ.id for occ in occurrences],
+        occurrence_ids=[occ.id for occ in occurrences],
         now=utcnow(),
     )
-    venue_name_map = await listings_repository.fetch_venue_name_map_for_occurrences(
-        db, occurrences
-    )
+    venue_name_map = await _fetch_venue_name_map_for_occurrences(db, occurrences)
     gallery_image_urls = (
         listing.gallery_image_urls
         if isinstance(listing.gallery_image_urls, list)
@@ -266,24 +267,22 @@ async def get_listing_occurrences_by_listing_id(
     date_from: date | None,
     date_to: date | None,
 ) -> dict[str, Any]:
-    record = await listings_repository.fetch_listing_record(db, listing_id)
+    record = await get_listing_by_id(db, listing_id)
     if not record:
         raise_api_error(404, "NOT_FOUND", "Listing not found")
 
-    occurrences = await listings_repository.fetch_occurrences_for_listing(
+    occurrences = await list_occurrences_for_listing(
         db,
         listing_id=listing_id,
         date_from=to_start_of_day(date_from),
         date_to=to_end_of_day(date_to),
     )
-    hold_quantities_by_occurrence = await listings_repository.fetch_active_hold_quantities(
+    hold_quantities_by_occurrence = await get_active_hold_quantities_by_occurrence(
         db,
-        [occ.id for occ in occurrences],
+        occurrence_ids=[occ.id for occ in occurrences],
         now=utcnow(),
     )
-    venue_name_map = await listings_repository.fetch_venue_name_map_for_occurrences(
-        db, occurrences
-    )
+    venue_name_map = await _fetch_venue_name_map_for_occurrences(db, occurrences)
     return {
         "items": [
             serialize_occurrence(
@@ -300,17 +299,15 @@ async def get_occurrence_seat_map(
     db: AsyncSession, occurrence_id: UUID
 ) -> dict[str, Any]:
     now = utcnow()
-    expired_count = await listings_repository.expire_stale_locks(db, now=now)
+    expired_count = await expire_stale_seat_locks(db, now=now)
     if expired_count:
-        await listings_repository.commit(db)
+        await db.commit()
 
-    occurrence = await listings_repository.fetch_occurrence(db, occurrence_id)
+    occurrence = await get_occurrence_by_id(db, occurrence_id)
     if not occurrence:
         raise_api_error(404, "NOT_FOUND", "Occurrence not found")
 
-    listing_record = await listings_repository.fetch_listing_record(
-        db, occurrence.listing_id
-    )
+    listing_record = await get_listing_by_id(db, occurrence.listing_id)
     if not listing_record:
         raise_api_error(404, "NOT_FOUND", "Listing not found")
 
@@ -386,10 +383,8 @@ async def get_occurrence_seat_map(
             for col in range(1, columns + 1):
                 all_seats.add(f"{row_name}{col}")
 
-    booked = await listings_repository.fetch_confirmed_booked_seats(db, occurrence.id)
-    locked = await listings_repository.fetch_active_seat_locks(
-        db, occurrence.id, now=now
-    )
+    booked = await get_confirmed_booked_seats(db, occurrence.id)
+    locked = await get_active_seat_locks(db, occurrence.id, now=now)
     all_seats.update(booked)
     all_seats.update(locked.keys())
 

@@ -1,4 +1,5 @@
 import re
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -15,11 +16,25 @@ def _normalize_email(value: str) -> str:
     return normalized
 
 
+def _normalize_name(value: str) -> str:
+    normalized = " ".join(value.strip().split())
+    if not normalized:
+        raise ValueError("Name cannot be empty")
+    return normalized
+
+
 class RegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return _normalize_name(value)
 
     @field_validator("email")
     @classmethod

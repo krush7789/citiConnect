@@ -44,7 +44,7 @@ def extract_payload_and_mime(content_base64: str) -> tuple[str, str | None]:
 
 
 def _filename_extension(filename: str) -> str | None:
-    suffix = Path(str(filename or "").strip()).suffix.lower().lstrip(".")
+    suffix = Path(filename).suffix.lower().lstrip(".")
     return suffix or None
 
 
@@ -127,7 +127,7 @@ async def upload_base64_media(payload: UploadBase64Request) -> dict:
             "Cloudinary credentials are not configured in the server.",
         )
 
-    folder = str(payload.folder or "general").strip()
+    folder = payload.folder or "general"
     target_folder = f"{settings.cloudinary_folder}/{folder}".strip("/")
     data_uri = f"data:{normalized_mime_type};base64,{encoded_payload}"
 

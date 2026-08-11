@@ -54,47 +54,11 @@ export const authService = {
 };
 
 export const cityService = {
-  getCities: async (params = {}) => {
-    const hasExplicitPaging =
-      Object.prototype.hasOwnProperty.call(params, "page")
-      || Object.prototype.hasOwnProperty.call(params, "page_size");
-    const baseParams = { is_active: true, ...params };
-
-    if (hasExplicitPaging) {
-      return paginatedCall(() => api.get("/cities", { params: baseParams }), normalizeCity);
-    }
-
-    try {
-      const pageSize = 100;
-      const aggregatedItems = [];
-      let page = 1;
-      let totalPages = 1;
-
-      while (page <= totalPages) {
-        const response = await api.get("/cities", {
-          params: {
-            ...baseParams,
-            page,
-            page_size: pageSize,
-          },
-        });
-        const normalizedPage = normalizePaginated(response?.data, normalizeCity);
-        aggregatedItems.push(...(normalizedPage.items || []));
-        totalPages = Math.max(1, Number(normalizedPage.total_pages || 1));
-        page += 1;
-      }
-
-      return {
-        items: aggregatedItems,
-        page: 1,
-        page_size: aggregatedItems.length || pageSize,
-        total: aggregatedItems.length,
-        total_pages: 1,
-      };
-    } catch (error) {
-      throw normalizeServiceError(error);
-    }
-  },
+  getCities: (params = {}) =>
+    paginatedCall(
+      () => api.get("/cities", { params: { is_active: true, ...params } }),
+      normalizeCity
+    ),
   getCitiesAdmin: (params = {}) => paginatedCall(() => api.get("/cities", { params }), normalizeCity),
   getVenues: (params = {}) => paginatedCall(() => api.get("/venues", { params }), (item) => item),
   geocodeAddress: (query) => {
@@ -110,7 +74,6 @@ export const cityService = {
 };
 
 export const listingService = {
-  getFilters: (params = {}) => handleApiCall(() => api.get("/listings/filters", { params })),
   getListings: (params = {}) => paginatedCall(() => api.get("/listings", { params }), normalizeListingCard),
   getListingById: (listingId) =>
     handleApiCall(() => api.get(`/listings/${listingId}`), (data) => ({

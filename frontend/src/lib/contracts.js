@@ -47,7 +47,7 @@ const toOptionalNumber = (value) => {
 };
 
 export const normalizeUser = (value = {}) => ({
-  id: value.id || "guest-user",
+  id: value.id ,
   name: value.name || "Guest User",
   email: value.email || "",
   role: value.role || USER_ROLE.USER,
@@ -192,11 +192,17 @@ export const normalizeOfferItem = (value = {}) => {
 
 export const normalizePaginated = (payload = {}, normalizer = (item) => item) => {
   const items = payload.items || payload.bookings || payload.offers || payload.logs || [];
-  return {
+  const normalized = {
     items: items.map(normalizer),
     page: Number(payload.page || 1),
     page_size: Number(payload.page_size || payload.pageSize || 20),
     total: Number(payload.total || items.length),
     total_pages: Number(payload.total_pages || Math.max(1, Math.ceil((payload.total || items.length) / (payload.page_size || 20)))),
   };
+
+  if (Object.prototype.hasOwnProperty.call(payload, "categories")) {
+    normalized.categories = toStringArray(payload.categories);
+  }
+
+  return normalized;
 };

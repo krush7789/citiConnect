@@ -58,10 +58,6 @@ def _token_payload(user: User) -> dict[str, str]:
     }
 
 
-def _normalize_email(value: str) -> str:
-    return value.strip().lower()
-
-
 async def register_user(
     db: AsyncSession,
     *,
@@ -80,15 +76,14 @@ async def register_user(
 
     ensure_password_policy(password)
 
-    normalized_email = _normalize_email(email)
-    existing = await get_user_by_email(db, normalized_email)
+    existing = await get_user_by_email(db, email)
     if existing:
         raise_api_error(409, "EMAIL_ALREADY_EXISTS", "Email is already registered")
 
     user = await create_user(
         db,
-        name=name.strip(),
-        email=normalized_email,
+        name=name,
+        email=email,
         password_hash=hash_password(password),
     )
     access_token = create_access_token(
@@ -115,8 +110,7 @@ async def register_user(
 async def login_user(
     db: AsyncSession, *, email: str, password: str
 ) -> tuple[dict, str]:
-    normalized_email = _normalize_email(email)
-    user = await get_user_by_email(db, normalized_email)
+    user = await get_user_by_email(db, email)
     if not user or not verify_password(password, user.password_hash):
         raise_api_error(401, "INVALID_CREDENTIALS", "Email or password is incorrect")
 
@@ -144,8 +138,7 @@ async def login_user(
 
 
 async def forgot_password(db: AsyncSession, *, email: str) -> None:
-    normalized_email = _normalize_email(email)
-    user = await get_user_by_email(db, normalized_email)
+    user = await get_user_by_email(db, email)
     if not user:
         return
 

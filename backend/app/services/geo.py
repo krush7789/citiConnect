@@ -1,5 +1,3 @@
-import math
-
 from sqlalchemy import func, literal
 from sqlalchemy.sql.elements import ColumnElement
 

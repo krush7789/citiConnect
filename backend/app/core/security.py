@@ -1,13 +1,10 @@
-import base64
-import hmac
-import json
 from datetime import datetime, timedelta, timezone
-from hashlib import sha256
 from typing import Any
 from uuid import uuid4
 
 import bcrypt
-
+import jwt
+from jwt.exceptions import PyJWTError as JWTError
 from app.core.config import settings
 
 
@@ -26,51 +23,37 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def _b64url_encode(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-
-def _b64url_decode(value: str) -> bytes:
-    padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(f"{value}{padding}".encode("ascii"))
-
-
-def _sign(message: bytes) -> str:
-    signature = hmac.new(settings.jwt_secret.encode("utf-8"), message, sha256).digest()
-    return _b64url_encode(signature)
-
-
 def _encode(payload: dict[str, Any]) -> str:
-    header = {"alg": settings.jwt_algorithm, "typ": "JWT"}
-    header_b64 = _b64url_encode(
-        json.dumps(header, separators=(",", ":")).encode("utf-8")
+    return jwt.encode(
+        payload,
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
     )
-    payload_b64 = _b64url_encode(
-        json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
-    )
-    signature_b64 = _sign(f"{header_b64}.{payload_b64}".encode("utf-8"))
-    return f"{header_b64}.{payload_b64}.{signature_b64}"
 
 
 def _decode(token: str) -> dict[str, Any]:
-    parts = token.split(".")
-    if len(parts) != 3:
-        raise TokenDecodeError("Malformed token")
-
-    header_b64, payload_b64, signature_b64 = parts
-    expected_sig = _sign(f"{header_b64}.{payload_b64}".encode("utf-8"))
-    if not hmac.compare_digest(signature_b64, expected_sig):
-        raise TokenDecodeError("Invalid signature")
-
-    payload_raw = _b64url_decode(payload_b64)
-    payload = json.loads(payload_raw.decode("utf-8"))
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except JWTError as exc:
+        raise TokenDecodeError(str(exc) or "Invalid token") from exc
+    except Exception as exc:
+        raise TokenDecodeError("Invalid token") from exc
 
     exp = payload.get("exp")
     if exp is None:
         raise TokenDecodeError("Token missing expiration")
 
+    try:
+        exp_ts = int(exp)
+    except (TypeError, ValueError):
+        raise TokenDecodeError("Invalid token expiration")
+
     now_ts = int(datetime.now(timezone.utc).timestamp())
-    if int(exp) < now_ts:
+    if exp_ts < now_ts:
         raise TokenDecodeError("Token expired")
 
     return payload

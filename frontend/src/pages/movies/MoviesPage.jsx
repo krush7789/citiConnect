@@ -1,15 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import HeroCarousel from "@/components/common/HeroCarousel";
 import FilterRow from "@/components/common/FilterRow";
 import MovieCard from "@/components/domain/MovieCard";
 import SortFilterModal from "@/components/common/SortFilterModal";
 import PaginationControls from "@/components/common/PaginationControls";
-import { listingService } from "@/api/services";
 import useSelectedCity from "@/hooks/useSelectedCity";
 import useUserLocation from "@/hooks/useUserLocation";
 import useWishlistToggle from "@/hooks/useWishlistToggle";
+import useListings from "@/hooks/useListings";
 
 const sortOptions = [
   { value: "newest", label: "Newest" },
@@ -41,50 +40,28 @@ const MoviesPage = () => {
     setPage(1);
   }, [cityId]);
 
-  const filtersQuery = useQuery({
-    queryKey: ["listing-filters", "MOVIE", cityId || "all"],
-    queryFn: () => listingService.getFilters({ city_id: cityId, types: "MOVIE" }),
+  const listingsQuery = useListings({
+    cityId,
+    types: "MOVIE",
+    category: activeFilter,
+    sort,
+    fallbackSort: "newest",
+    page,
+    pageSize: 18,
+    userCoords,
+    distanceSortEnabled,
+    locationLoading,
   });
 
   const filters = useMemo(() => {
-    const categories = filtersQuery.data?.categories;
+    const categories = listingsQuery.data?.categories;
     return ["All", ...(categories?.length ? categories : ["Hindi", "English"])];
-  }, [filtersQuery.data]);
+  }, [listingsQuery.data?.categories]);
 
   useEffect(() => {
     if (filters.includes(activeFilter)) return;
     setActiveFilter("All");
   }, [filters, activeFilter]);
-
-  const listingsQuery = useQuery({
-    queryKey: [
-      "listings-feed",
-      "MOVIE",
-      cityId || "all",
-      activeFilter,
-      sort,
-      page,
-      userCoords?.latitude || null,
-      userCoords?.longitude || null,
-    ],
-    enabled: !(distanceSortEnabled && locationLoading),
-    queryFn: () => {
-      const effectiveSort = distanceSortEnabled && !userCoords ? "newest" : sort;
-      const queryParams = {
-        city_id: cityId,
-        types: "MOVIE",
-        category: activeFilter !== "All" ? activeFilter : undefined,
-        sort: effectiveSort,
-        page,
-        page_size: 18,
-      };
-      if (distanceSortEnabled && userCoords) {
-        queryParams.user_lat = userCoords.latitude;
-        queryParams.user_lon = userCoords.longitude;
-      }
-      return listingService.getListings(queryParams);
-    },
-  });
 
   useEffect(() => {
     setMovies(listingsQuery.data?.items || []);
@@ -163,7 +140,13 @@ const MoviesPage = () => {
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mt-5">
             {movies.map((movie) => (
-              <MovieCard key={movie.id} listing={movie} compact onToggleWishlist={toggleWishlist} />
+              <MovieCard
+                key={movie.id}
+                listing={movie}
+                compact
+                onToggleWishlist={toggleWishlist}
+                showDistance={distanceSortEnabled && Boolean(userCoords)}
+              />
             ))}
           </div>
         )}

@@ -163,7 +163,7 @@ const AdminDashboard = () => {
 
   const cityQuery = useQuery({
     queryKey: ["admin-dashboard-cities"],
-    queryFn: () => cityService.getCities(),
+    queryFn: () => cityService.getCities({ page: 1, page_size: 100 }),
   });
   const cities = cityQuery.data?.items || [];
 

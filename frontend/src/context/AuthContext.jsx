@@ -62,7 +62,6 @@ export const AuthProvider = ({ children }) => {
   const [authLoading, setAuthLoading] = useState(false);
 
   const isAuthenticated = Boolean(user);
-  const authState = user ? "authenticated" : "anonymous";
 
   const persistUser = useCallback((rawUser) => {
     const normalizedUser = normalizeUser(rawUser || {});
@@ -194,7 +193,6 @@ export const AuthProvider = ({ children }) => {
     () => ({
       user,
       isAuthenticated,
-      authState,
       authLoading,
       authModalState,
       pendingIntent,
@@ -213,7 +211,6 @@ export const AuthProvider = ({ children }) => {
     [
       user,
       isAuthenticated,
-      authState,
       authLoading,
       authModalState,
       pendingIntent,

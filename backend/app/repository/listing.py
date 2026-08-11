@@ -378,9 +378,7 @@ async def get_filters_metadata(
     city_id: UUID | None,
     types: list[ListingType] | None,
 ) -> dict:
-    stmt = select(
-        Listing.category, Listing.vibe_tags, Listing.price_min, Listing.price_max
-    ).where(Listing.status == ListingStatus.PUBLISHED)
+    stmt = select(Listing.category).where(Listing.status == ListingStatus.PUBLISHED)
 
     if city_id:
         nationwide_city_ids = await _get_nationwide_city_ids(db)
@@ -397,27 +395,8 @@ async def get_filters_metadata(
     rows = (await db.execute(stmt)).all()
 
     categories = sorted({row[0] for row in rows if row[0]})
-    vibe_set: set[str] = set()
-    min_price: Decimal | None = None
-    max_price: Decimal | None = None
-
-    for _, vibe_tags, p_min, p_max in rows:
-        if isinstance(vibe_tags, list):
-            for tag in vibe_tags:
-                if isinstance(tag, str):
-                    vibe_set.add(tag)
-
-        if p_min is not None:
-            min_price = p_min if min_price is None else min(min_price, p_min)
-        if p_max is not None:
-            max_price = p_max if max_price is None else max(max_price, p_max)
 
     return {
         "categories": categories,
-        "vibe_tags": sorted(vibe_set),
-        "price_range": {
-            "min": float(min_price or 0),
-            "max": float(max_price or 0),
-        },
     }
 

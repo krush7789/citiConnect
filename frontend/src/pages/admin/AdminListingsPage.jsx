@@ -215,7 +215,7 @@ const AdminListingsPage = () => {
   useEffect(() => {
     let mounted = true;
     cityService
-      .getCities()
+      .getCities({ page: 1, page_size: 100 })
       .then((response) => {
         if (!mounted) return;
         setCities(response.items || []);
@@ -247,7 +247,7 @@ const AdminListingsPage = () => {
 
     let mounted = true;
     cityService
-      .getVenues({ city_id: selectedCityId })
+      .getVenues({ city_id: selectedCityId, page: 1, page_size: 200 })
       .then((response) => {
         if (!mounted) return;
         const nextVenues = response.items || [];

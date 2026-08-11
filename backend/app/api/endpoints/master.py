@@ -21,6 +21,8 @@ router = APIRouter(tags=["master"])
 
 @router.get("/cities", response_model=PaginatedResponse[CityItem])
 async def get_cities(
+    q: str | None = Query(default=None),
+    state: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
@@ -28,6 +30,8 @@ async def get_cities(
 ):
     return await get_cities_page(
         db,
+        q=q,
+        state=state,
         is_active=is_active,
         page=page,
         page_size=page_size,

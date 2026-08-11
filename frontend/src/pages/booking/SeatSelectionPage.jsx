@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, MapPin } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ const SeatSelectionPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const loadSeatMap = React.useCallback(async () => {
+  const loadSeatMap = useCallback(async () => {
     const response = await listingService.getSeatMap(occurrenceId);
     setSeatMap(response);
     setSelectedSeats((prev) => {

@@ -1,11 +1,29 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import BookingStatus
+
+BookingScope = Literal["upcoming", "past", "cancelled"]
+
+
+def _strip_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _strip_upper_or_none(value: Any) -> str | None:
+    cleaned = _strip_or_none(value)
+    if cleaned is None or not isinstance(cleaned, str):
+        return cleaned
+    return cleaned.upper()
 
 
 class BookingLockRequest(BaseModel):
@@ -19,14 +37,29 @@ class BookingLockRequest(BaseModel):
 class ApplyOfferRequest(BaseModel):
     coupon_code: str | None = None
 
+    @field_validator("coupon_code", mode="before")
+    @classmethod
+    def normalize_coupon_code(cls, value: Any):
+        return _strip_upper_or_none(value)
+
 
 class ConfirmBookingRequest(BaseModel):
     payment_method: str | None = None
     payment_payload: dict[str, Any] | None = None
 
+    @field_validator("payment_method", mode="before")
+    @classmethod
+    def normalize_payment_method(cls, value: Any):
+        return _strip_upper_or_none(value)
+
 
 class CancelBookingRequest(BaseModel):
     reason: str | None = None
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: Any):
+        return _strip_or_none(value)
 
 
 class AppliedOfferRef(BaseModel):

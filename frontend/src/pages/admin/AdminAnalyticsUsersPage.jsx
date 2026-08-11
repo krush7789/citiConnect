@@ -61,7 +61,7 @@ const AdminAnalyticsUsersPage = () => {
 
   const cityQuery = useQuery({
     queryKey: ["analytics-users-cities"],
-    queryFn: () => cityService.getCities(),
+    queryFn: () => cityService.getCities({ page: 1, page_size: 100 }),
   });
   const cities = cityQuery.data?.items || [];
 

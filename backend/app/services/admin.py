@@ -4,8 +4,7 @@ import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from enum import Enum
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +14,6 @@ from app.models.admin_audit_log import AdminAuditLog
 from app.models.city import City
 from app.models.enums import (
     BookingStatus,
-    DiscountType,
     ListingStatus,
     ListingType,
     NotificationType,
@@ -58,32 +56,13 @@ NATIONWIDE_CITY_STATE = "Nationwide"
 NATIONWIDE_VENUE_NAME = "Multiple Venues"
 NATIONWIDE_VENUE_ADDRESS = "Venue announced later"
 
-EnumType = TypeVar("EnumType", bound=Enum)
-
 DEFAULT_DASHBOARD_PRESET = "30d"
 DEFAULT_SOURCE_DIMENSION = "category"
 DEFAULT_TOP_N = 8
-MAX_TOP_N = 25
 MAX_DATE_WINDOW_DAYS = 365
 DEFAULT_DRILL_PAGE = 1
 DEFAULT_DRILL_PAGE_SIZE = 25
-MAX_DRILL_PAGE_SIZE = 100
 
-DASHBOARD_PRESETS = {"7d", "30d", "90d", "mtd", "custom"}
-DASHBOARD_INTERVALS = {"day", "week", "month"}
-SOURCE_DIMENSIONS = {
-    "category",
-    "listing_type",
-    "city",
-    "payment_provider",
-    "offer_code",
-}
-DRILL_METRICS = {
-    "revenue_sources",
-    "usage_by_region",
-    "event_attendance",
-    "new_users",
-}
 DRILL_SORT_WHITELIST: dict[str, set[str]] = {
     "revenue_sources": {"key", "revenue", "bookings", "transacting_users"},
     "usage_by_region": {"city_name", "revenue", "bookings", "transacting_users"},
@@ -103,134 +82,6 @@ DRILL_DEFAULT_SORT_BY = {
     "event_attendance": "attendance",
     "new_users": "created_at",
 }
-
-
-def normalize_discount_type(raw: str) -> DiscountType:
-    candidate = raw.strip().upper()
-    if candidate == "PERCENTAGE":
-        candidate = "PERCENT"
-    try:
-        return DiscountType(candidate)
-    except ValueError:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"discount_type": "Invalid discount type"}},
-        )
-
-
-def normalize_limit(value: int | None) -> int | None:
-    if value is None or value <= 0:
-        return None
-    return value
-
-
-def _parse_enum_value(
-    value: str | None,
-    enum_cls: type[EnumType],
-    *,
-    field_name: str,
-    message: str,
-) -> EnumType | None:
-    if not value:
-        return None
-    try:
-        return enum_cls(value.strip().upper())
-    except ValueError:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {field_name: message}},
-        )
-
-
-def parse_booking_status(value: str | None) -> BookingStatus | None:
-    return _parse_enum_value(
-        value,
-        BookingStatus,
-        field_name="status",
-        message="Invalid booking status",
-    )
-
-
-def parse_listing_type(value: str | None) -> ListingType | None:
-    return _parse_enum_value(
-        value,
-        ListingType,
-        field_name="type",
-        message="Invalid listing type",
-    )
-
-
-def parse_listing_status(value: str | None) -> ListingStatus | None:
-    return _parse_enum_value(
-        value,
-        ListingStatus,
-        field_name="status",
-        message="Invalid listing status",
-    )
-
-
-def parse_occurrence_status(value: str | None) -> OccurrenceStatus | None:
-    return _parse_enum_value(
-        value,
-        OccurrenceStatus,
-        field_name="status",
-        message="Invalid occurrence status",
-    )
-
-
-def ensure_valid_dashboard_metric(metric: str) -> str:
-    normalized = (metric or "").strip()
-    if normalized in DRILL_METRICS:
-        return normalized
-    raise_api_error(
-        422,
-        "VALIDATION_ERROR",
-        "Some fields are invalid",
-        {"fields": {"metric": "Invalid metric"}},
-    )
-
-
-def ensure_valid_source_dimension(value: str) -> str:
-    normalized = (value or "").strip().lower() or DEFAULT_SOURCE_DIMENSION
-    if normalized in SOURCE_DIMENSIONS:
-        return normalized
-    raise_api_error(
-        422,
-        "VALIDATION_ERROR",
-        "Some fields are invalid",
-        {"fields": {"source_dimension": "Invalid source dimension"}},
-    )
-
-
-def ensure_valid_preset(value: str) -> str:
-    normalized = (value or "").strip().lower() or DEFAULT_DASHBOARD_PRESET
-    if normalized in DASHBOARD_PRESETS:
-        return normalized
-    raise_api_error(
-        422,
-        "VALIDATION_ERROR",
-        "Some fields are invalid",
-        {"fields": {"preset": "Invalid preset"}},
-    )
-
-
-def ensure_valid_interval(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip().lower()
-    if normalized in DASHBOARD_INTERVALS:
-        return normalized
-    raise_api_error(
-        422,
-        "VALIDATION_ERROR",
-        "Some fields are invalid",
-        {"fields": {"interval": "Invalid interval"}},
-    )
-
 
 def resolve_dashboard_range(
     *,
@@ -282,9 +133,8 @@ def resolve_auto_interval(
     end_utc: datetime,
     requested_interval: str | None,
 ) -> str:
-    normalized_interval = ensure_valid_interval(requested_interval)
-    if normalized_interval:
-        return normalized_interval
+    if requested_interval:
+        return requested_interval
 
     days = (end_utc - start_utc).total_seconds() / 86400
     return "day" if days <= 92 else "week"
@@ -347,30 +197,7 @@ def with_series_growth(series_rows: list[dict[str, Any]]) -> list[dict[str, Any]
     return normalized_rows
 
 
-def normalize_top_n(value: int) -> int:
-    if value < 1 or value > MAX_TOP_N:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"top_n": f"top_n must be between 1 and {MAX_TOP_N}"}},
-        )
-    return value
 
-
-def normalize_page_size(value: int) -> int:
-    if value < 1 or value > MAX_DRILL_PAGE_SIZE:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {
-                "fields": {
-                    "page_size": f"page_size must be between 1 and {MAX_DRILL_PAGE_SIZE}"
-                }
-            },
-        )
-    return value
 
 
 def parse_uuid_or_none(value: str | None) -> UUID | None:
@@ -407,21 +234,7 @@ def normalize_title_text(value: str | None) -> str | None:
     return to_title_case_words(cleaned)
 
 
-def normalize_string_list(items: list[str] | None) -> list[str] | None:
-    if not items:
-        return None
-    cleaned = [item.strip() for item in items if isinstance(item, str) and item.strip()]
-    return cleaned or None
 
-
-def normalize_json_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def normalize_seat_layout(value: Any) -> Any | None:
-    if isinstance(value, (dict, list)):
-        return value
-    return None
 
 
 def build_venue_geocode_query(*, venue_name: str, address: str, city: City) -> str:
@@ -541,19 +354,7 @@ async def resolve_listing_city_and_venue(
     return city, venue
 
 
-def normalize_ticket_pricing(ticket_pricing: Any) -> dict[str, float] | None:
-    if isinstance(ticket_pricing, dict):
-        normalized = {}
-        for key, value in ticket_pricing.items():
-            key_text = str(key).strip().upper()
-            if not key_text or value is None:
-                continue
-            try:
-                normalized[key_text] = float(value)
-            except (TypeError, ValueError):
-                continue
-        return normalized or None
-    return None
+
 
 
 def validate_price_range(price_min: Decimal | None, price_max: Decimal | None) -> None:
@@ -748,8 +549,8 @@ def serialize_occurrence_row(
         "provider_sub_location": occurrence.provider_sub_location,
         "capacity_total": int(occurrence.capacity_total or 0),
         "capacity_remaining": int(occurrence.capacity_remaining or 0),
-        "ticket_pricing": normalize_ticket_pricing(occurrence.ticket_pricing),
-        "seat_layout": normalize_seat_layout(occurrence.seat_layout),
+        "ticket_pricing": occurrence.ticket_pricing if isinstance(occurrence.ticket_pricing, dict) else None,
+        "seat_layout": occurrence.seat_layout if isinstance(occurrence.seat_layout, (dict, list)) else None,
         "status": occurrence.status.value,
     }
 
@@ -787,9 +588,9 @@ async def get_admin_dashboard(
     source_dimension: str = DEFAULT_SOURCE_DIMENSION,
     top_n: int = DEFAULT_TOP_N,
 ) -> dict[str, Any]:
-    normalized_preset = ensure_valid_preset(preset)
-    normalized_source_dimension = ensure_valid_source_dimension(source_dimension)
-    normalized_top_n = normalize_top_n(top_n)
+    normalized_preset = preset
+    normalized_source_dimension = source_dimension
+    normalized_top_n = top_n
 
     current_start_utc, current_end_utc = resolve_dashboard_range(
         preset=normalized_preset,
@@ -886,10 +687,10 @@ async def get_admin_dashboard_drill_page(
     sort_dir: str = "desc",
     q: str | None = None,
 ) -> dict[str, Any]:
-    normalized_metric = ensure_valid_dashboard_metric(metric)
-    normalized_preset = ensure_valid_preset(preset)
-    normalized_source_dimension = ensure_valid_source_dimension(source_dimension)
-    normalized_page_size = normalize_page_size(page_size)
+    normalized_metric = metric
+    normalized_preset = preset
+    normalized_source_dimension = source_dimension
+    normalized_page_size = page_size
     normalized_page = max(1, int(page))
     normalized_sort_by, normalized_sort_dir = normalize_drill_sort(
         normalized_metric,
@@ -987,15 +788,15 @@ async def get_admin_dashboard_drill_page(
 async def get_admin_listings_page(
     db: AsyncSession,
     *,
-    type: str | None,
-    status: str | None,
+    type: ListingType | None,
+    status: ListingStatus | None,
     city: str | None,
     q: str | None,
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
-    type_enum = parse_listing_type(type)
-    status_enum = parse_listing_status(status)
+    type_enum = type
+    status_enum = status
 
     query_text = q.strip() if q and q.strip() else None
     listing_uuid = parse_uuid_or_none(query_text)
@@ -1047,21 +848,21 @@ async def create_admin_listing_entry(
 
     listing = Listing(
         type=payload.type,
-        title=to_title_case_words(payload.title),
-        description=normalize_optional_text(payload.description),
+        title=payload.title,
+        description=payload.description,
         city_id=city.id,
         venue_id=venue.id,
-        category=normalize_optional_text(payload.category),
+        category=payload.category,
         price_min=payload.price_min,
         price_max=payload.price_max
         if payload.price_max is not None
         else payload.price_min,
-        cover_image_url=normalize_optional_text(payload.cover_image_url),
-        gallery_image_urls=normalize_string_list(payload.gallery_image_urls),
+        cover_image_url=payload.cover_image_url,
+        gallery_image_urls=payload.gallery_image_urls,
         is_featured=payload.is_featured,
-        offer_text=normalize_optional_text(payload.offer_text),
-        vibe_tags=normalize_string_list(payload.vibe_tags),
-        metadata_json=normalize_json_dict(payload.metadata),
+        offer_text=payload.offer_text,
+        vibe_tags=payload.vibe_tags,
+        metadata_json=payload.metadata,
         status=payload.status,
         created_by=admin_user_id,
     )
@@ -1140,10 +941,10 @@ async def update_admin_listing_entry(
         listing.type = payload.type
         diff["type"] = payload.type.value
     if payload.title is not None:
-        listing.title = to_title_case_words(payload.title)
+        listing.title = payload.title
         diff["title"] = listing.title
     if payload.description is not None:
-        listing.description = normalize_optional_text(payload.description)
+        listing.description = payload.description
         diff["description"] = listing.description
     if listing.city_id != selected_city.id:
         listing.city_id = selected_city.id
@@ -1152,7 +953,7 @@ async def update_admin_listing_entry(
         listing.venue_id = selected_venue.id
         diff["venue_id"] = str(selected_venue.id)
     if payload.category is not None:
-        listing.category = normalize_optional_text(payload.category)
+        listing.category = payload.category
         diff["category"] = listing.category
     if payload.price_min is not None:
         listing.price_min = payload.price_min
@@ -1167,19 +968,19 @@ async def update_admin_listing_entry(
         listing.is_featured = payload.is_featured
         diff["is_featured"] = payload.is_featured
     if "offer_text" in payload.model_fields_set:
-        listing.offer_text = normalize_optional_text(payload.offer_text)
+        listing.offer_text = payload.offer_text
         diff["offer_text"] = listing.offer_text
     if payload.cover_image_url is not None:
-        listing.cover_image_url = normalize_optional_text(payload.cover_image_url)
+        listing.cover_image_url = payload.cover_image_url
         diff["cover_image_url"] = listing.cover_image_url
     if payload.gallery_image_urls is not None:
-        listing.gallery_image_urls = normalize_string_list(payload.gallery_image_urls)
+        listing.gallery_image_urls = payload.gallery_image_urls
         diff["gallery_image_urls"] = listing.gallery_image_urls or []
     if payload.metadata is not None:
-        listing.metadata_json = normalize_json_dict(payload.metadata)
+        listing.metadata_json = payload.metadata
         diff["metadata"] = listing.metadata_json
     if payload.vibe_tags is not None:
-        listing.vibe_tags = normalize_string_list(payload.vibe_tags)
+        listing.vibe_tags = payload.vibe_tags
         diff["vibe_tags"] = listing.vibe_tags or []
 
     await add_audit_log(
@@ -1352,7 +1153,7 @@ async def get_admin_occurrences_page(
     db: AsyncSession,
     *,
     listing_id: UUID,
-    status: str | None,
+    status: OccurrenceStatus | None,
     q: str | None,
     page: int,
     page_size: int,
@@ -1361,7 +1162,7 @@ async def get_admin_occurrences_page(
     if not listing:
         raise_api_error(404, "NOT_FOUND", "Listing not found")
 
-    status_enum = parse_occurrence_status(status)
+    status_enum = status
     query_text = q.strip() if q and q.strip() else None
     occurrence_uuid = parse_uuid_or_none(query_text)
 
@@ -1426,7 +1227,7 @@ async def create_admin_occurrence_entries(
                 {"fields": {"venue_id": "Venue does not belong to listing city"}},
             )
 
-        normalized_sub_location = normalize_title_text(entry.provider_sub_location)
+        normalized_sub_location = entry.provider_sub_location
         conflict_sub_location = normalize_occurrence_sub_location_key(
             normalized_sub_location
         )
@@ -1472,8 +1273,8 @@ async def create_admin_occurrence_entries(
                 provider_sub_location=normalized_sub_location,
                 capacity_total=int(entry.capacity_total),
                 capacity_remaining=int(entry.capacity_total),
-                ticket_pricing=normalize_json_dict(entry.ticket_pricing),
-                seat_layout=normalize_seat_layout(entry.seat_layout),
+                ticket_pricing=entry.ticket_pricing,
+                seat_layout=entry.seat_layout,
                 status=OccurrenceStatus.SCHEDULED,
             )
         )
@@ -1572,9 +1373,7 @@ async def update_admin_occurrence_entry(
 
     next_provider_sub_location = occurrence.provider_sub_location
     if "provider_sub_location" in payload.model_fields_set:
-        next_provider_sub_location = normalize_title_text(
-            payload.provider_sub_location
-        )
+        next_provider_sub_location = payload.provider_sub_location
 
     next_status = occurrence.status
     if "status" in payload.model_fields_set and payload.status is not None:
@@ -1649,11 +1448,11 @@ async def update_admin_occurrence_entry(
         diff["capacity_remaining"] = occurrence.capacity_remaining
 
     if "ticket_pricing" in payload.model_fields_set:
-        occurrence.ticket_pricing = normalize_json_dict(payload.ticket_pricing)
+        occurrence.ticket_pricing = payload.ticket_pricing
         diff["ticket_pricing"] = occurrence.ticket_pricing
 
     if "seat_layout" in payload.model_fields_set:
-        occurrence.seat_layout = normalize_seat_layout(payload.seat_layout)
+        occurrence.seat_layout = payload.seat_layout
         diff["seat_layout"] = occurrence.seat_layout
 
     if "status" in payload.model_fields_set and payload.status is not None:
@@ -1695,7 +1494,7 @@ async def cancel_admin_occurrence_entry(
 
     listing = await admin_repository.get_listing(db, occurrence.listing_id)
     venue = await admin_repository.get_venue(db, occurrence.venue_id)
-    reason = normalize_optional_text(payload.reason) or "Occurrence cancelled by admin"
+    reason = payload.reason or "Occurrence cancelled by admin"
     if occurrence.status != OccurrenceStatus.CANCELLED:
         occurrence.status = OccurrenceStatus.CANCELLED
     occurrence.capacity_remaining = occurrence.capacity_total
@@ -1809,7 +1608,7 @@ async def cancel_admin_occurrence_entry(
 async def get_admin_bookings_page(
     db: AsyncSession,
     *,
-    status: str | None,
+    status: BookingStatus | None,
     listing_type: ListingType | None,
     date_from: date | None,
     date_to: date | None,
@@ -1818,7 +1617,7 @@ async def get_admin_bookings_page(
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
-    status_enum = parse_booking_status(status)
+    status_enum = status
     listing_type_enum = listing_type
     if date_from and date_to and date_from > date_to:
         raise_api_error(
@@ -1910,14 +1709,7 @@ async def create_admin_offer_entry(
     payload: OfferCreateRequest,
     admin_user_id: UUID,
 ) -> dict[str, Any]:
-    code = payload.code.strip().upper()
-    if not code:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"code": "Code is required"}},
-        )
+    code = payload.code
 
     existing = await admin_repository.find_offer_id_by_code_case_insensitive(
         db,
@@ -1932,16 +1724,16 @@ async def create_admin_offer_entry(
 
     offer = Offer(
         code=code,
-        title=payload.title.strip(),
+        title=payload.title,
         description=None,
-        discount_type=normalize_discount_type(payload.discount_type),
+        discount_type=payload.discount_type,
         discount_value=payload.discount_value,
         min_order_value=payload.min_order_value,
         max_discount_value=payload.max_discount_value,
         valid_from=valid_from,
         valid_until=valid_until,
-        usage_limit=normalize_limit(payload.usage_limit),
-        user_usage_limit=normalize_limit(payload.user_usage_limit),
+        usage_limit=payload.usage_limit,
+        user_usage_limit=payload.user_usage_limit,
         is_active=payload.is_active,
         applicability=payload.applicability or {},
     )
@@ -1977,14 +1769,7 @@ async def update_admin_offer_entry(
 
     diff: dict[str, Any] = {}
     if payload.code is not None:
-        code = payload.code.strip().upper()
-        if not code:
-            raise_api_error(
-                422,
-                "VALIDATION_ERROR",
-                "Some fields are invalid",
-                {"fields": {"code": "Code cannot be empty"}},
-            )
+        code = payload.code
         duplicate = await admin_repository.find_offer_id_by_code_case_insensitive(
             db,
             code=code,
@@ -1996,10 +1781,10 @@ async def update_admin_offer_entry(
         diff["code"] = code
 
     if payload.title is not None:
-        offer.title = payload.title.strip()
+        offer.title = payload.title
         diff["title"] = offer.title
     if payload.discount_type is not None:
-        offer.discount_type = normalize_discount_type(payload.discount_type)
+        offer.discount_type = payload.discount_type
         diff["discount_type"] = offer.discount_type.value
     if payload.discount_value is not None:
         offer.discount_value = payload.discount_value
@@ -2036,10 +1821,10 @@ async def update_admin_offer_entry(
                 next_valid_until.isoformat() if next_valid_until else None
             )
     if payload.usage_limit is not None:
-        offer.usage_limit = normalize_limit(payload.usage_limit)
+        offer.usage_limit = payload.usage_limit
         diff["usage_limit"] = offer.usage_limit
     if payload.user_usage_limit is not None:
-        offer.user_usage_limit = normalize_limit(payload.user_usage_limit)
+        offer.user_usage_limit = payload.user_usage_limit
         diff["user_usage_limit"] = offer.user_usage_limit
     if payload.is_active is not None:
         offer.is_active = payload.is_active
@@ -2125,14 +1910,7 @@ async def create_admin_city_entry(
     payload: CityCreateRequest,
     admin_user_id: UUID,
 ) -> dict[str, Any]:
-    name = to_title_case_words(payload.name)
-    if not name:
-        raise_api_error(
-            422,
-            "VALIDATION_ERROR",
-            "Some fields are invalid",
-            {"fields": {"name": "City name is required"}},
-        )
+    name = payload.name
 
     duplicate = await admin_repository.find_city_by_name_case_insensitive(db, name)
     if duplicate:
@@ -2140,8 +1918,8 @@ async def create_admin_city_entry(
 
     city = City(
         name=name,
-        state=normalize_title_text(payload.state),
-        image_url=normalize_optional_text(payload.image_url),
+        state=payload.state,
+        image_url=payload.image_url,
         is_active=payload.is_active,
     )
     admin_repository.add_instance(db, city)
@@ -2171,14 +1949,7 @@ async def update_admin_city_entry(
 
     diff: dict[str, Any] = {}
     if payload.name is not None:
-        next_name = to_title_case_words(payload.name)
-        if not next_name:
-            raise_api_error(
-                422,
-                "VALIDATION_ERROR",
-                "Some fields are invalid",
-                {"fields": {"name": "City name is required"}},
-            )
+        next_name = payload.name
         duplicate = await admin_repository.find_city_by_name_case_insensitive(
             db, next_name
         )
@@ -2188,11 +1959,11 @@ async def update_admin_city_entry(
         diff["name"] = city.name
 
     if "state" in payload.model_fields_set:
-        city.state = normalize_title_text(payload.state)
+        city.state = payload.state
         diff["state"] = city.state
 
     if "image_url" in payload.model_fields_set:
-        city.image_url = normalize_optional_text(payload.image_url)
+        city.image_url = payload.image_url
         diff["image_url"] = city.image_url
 
     cancelled_occurrences = 0
@@ -2245,8 +2016,8 @@ async def create_admin_venue_entry(
     if not city:
         raise_api_error(404, "NOT_FOUND", "City not found")
 
-    normalized_name = to_title_case_words(payload.name)
-    normalized_address = normalize_optional_text(payload.address)
+    normalized_name = payload.name
+    normalized_address = payload.address
     latitude = payload.latitude
     longitude = payload.longitude
 
@@ -2322,7 +2093,7 @@ async def update_admin_venue_entry(
 
     diff: dict[str, Any] = {}
     if payload.name is not None:
-        venue.name = to_title_case_words(payload.name)
+        venue.name = payload.name
         diff["name"] = venue.name
 
     if payload.city_id is not None:
@@ -2333,7 +2104,7 @@ async def update_admin_venue_entry(
         diff["city_id"] = str(venue.city_id)
 
     if "address" in payload.model_fields_set:
-        venue.address = normalize_optional_text(payload.address)
+        venue.address = payload.address
         diff["address"] = venue.address
 
     if payload.venue_type is not None:
@@ -2440,4 +2211,3 @@ async def soft_delete_admin_venue_entry(
             "is_active": venue.is_active,
         },
     }
-
