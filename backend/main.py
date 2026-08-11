@@ -45,6 +45,13 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+@app.get("/api")
+@app.get("/api/v1/health")
+async def health_check():
+    return {"status": "ok", "app": settings.app_name}
+
+
 app.include_router(router)
 add_pagination(app)
 
