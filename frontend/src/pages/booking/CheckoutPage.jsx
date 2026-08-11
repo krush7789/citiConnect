@@ -479,6 +479,7 @@ const CheckoutPage = () => {
         setShowOfferModal(false);
         setShowPaymentModal(false);
         setActionLoading(false);
+        navigate(`/bookings/${latest.id}`, { replace: true });
         return;
       }
 
@@ -517,6 +518,7 @@ const CheckoutPage = () => {
             setBooking(updated);
             setShowOfferModal(false);
             setShowPaymentModal(false);
+            navigate(`/bookings/${latest.id}`, { replace: true });
           } catch (err) {
             if (err?.normalized?.code === "BOOKING_EXPIRED") {
               await handleHoldExpired(err?.normalized?.details || {});
