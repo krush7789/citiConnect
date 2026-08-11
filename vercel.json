@@ -9,5 +9,15 @@
       "framework": "fastapi",
       "entrypoint": "main.py"
     }
-  }
+  },
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "service": "backend"
+    },
+    {
+      "src": "/(.*)",
+      "service": "frontend"
+    }
+  ]
 }
