@@ -1,5 +1,11 @@
 import logging
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+backend_dir = Path(__file__).resolve().parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
