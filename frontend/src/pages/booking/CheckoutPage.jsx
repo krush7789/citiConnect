@@ -458,8 +458,28 @@ const CheckoutPage = () => {
       const amount = Number(paymentOrder?.amount || 0);
       const currency = String(paymentOrder?.currency || latest.currency || "INR").trim() || "INR";
       const key = String(paymentOrder?.key_id || "").trim();
-      if (!orderId || !key || !Number.isFinite(amount) || amount <= 0) {
+
+      if (!orderId || !Number.isFinite(amount) || amount <= 0) {
         throw new Error("Unable to initialize payment. Please try again.");
+      }
+
+      // Demo mode / fallback checkout
+      if (orderId.startsWith("order_demo_") || key === "rzp_test_dummy_key") {
+        const dummyPayload = {
+          razorpay_order_id: orderId,
+          razorpay_payment_id: `pay_demo_${Date.now()}`,
+          razorpay_signature: "demo_signature",
+        };
+        const updated = await bookingService.confirmBooking(
+          latest.id,
+          { payment_method: "RAZORPAY", payment_payload: dummyPayload },
+          idempotencyKeyRef.current
+        );
+        setBooking(updated);
+        setShowOfferModal(false);
+        setShowPaymentModal(false);
+        setActionLoading(false);
+        return;
       }
 
       await ensureRazorpayScript();
